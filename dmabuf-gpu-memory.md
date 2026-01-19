@@ -647,7 +647,7 @@ static int ib_umem_dmabuf_map_pages(struct ib_umem_dmabuf *umem)
 6. Registration is still expensive (100-500 μs) - **caching is critical**
 
 **Related Documentation**:
-- [08-mr-cache-implementation.md](08-mr-cache-implementation.md) - MR cache (works with dmabuf keys)
-- [20-rdma-memreg.md](20-rdma-memreg.md) - General memory registration concepts
-- [11-rdma-core-and-verbs.md](11-rdma-core-and-verbs.md) - rdma-core API that dmabuf uses
-- [13-kernel-efa-driver.md](13-kernel-efa-driver.md) - Kernel driver dmabuf implementation
+- [mr-cache-implementation.md](mr-cache-implementation.md) - MR cache (works with dmabuf keys)
+- [rdma-memreg.md](rdma-memreg.md) - General memory registration concepts
+- [rdma-core-and-verbs.md](rdma-core-and-verbs.md) - rdma-core API that dmabuf uses
+- [kernel-efa-driver.md](kernel-efa-driver.md) - Kernel driver dmabuf implementation

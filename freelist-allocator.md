@@ -453,9 +453,9 @@ void nccl_ofi_freelist_stats(nccl_ofi_freelist_t *freelist) {
 
 ## Related Components
 
-- **Memory Registration Cache** ([12-lkey-rkey-explained.md](12-lkey-rkey-explained.md)): Freelist MR handles may be cached
-- **Send/Recv Protocol** ([05-ofi-plugin-protocols.md](05-ofi-plugin-protocols.md)): Request structures allocated from freelist
-- **RDMA & Memory Registration** ([20-rdma-memreg.md](20-rdma-memreg.md)): Freelist uses `fi_mr_reg()` for blocks
+- **Memory Registration Cache** ([lkey-rkey-explained.md](lkey-rkey-explained.md)): Freelist MR handles may be cached
+- **Send/Recv Protocol** ([ofi-plugin-protocols.md](ofi-plugin-protocols.md)): Request structures allocated from freelist
+- **RDMA & Memory Registration** ([rdma-memreg.md](rdma-memreg.md)): Freelist uses `fi_mr_reg()` for blocks
 
 ## Summary
 

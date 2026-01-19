@@ -5,7 +5,7 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 
 ## Completed Documents
 
-### 04-ofi-plugin.md ✅
+### ofi-plugin.md ✅
 **Status**: 42 permalinks added
 **Key structs/functions linked**:
 - `struct nccl_net_ofi_listen_comm`, `struct nccl_net_ofi_send_comm`, `struct nccl_net_ofi_recv_comm`
@@ -15,13 +15,13 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 - `fi_tsend()`, `fi_trecv()`, `fi_cq_read()`, `fi_cq_readerr()`
 - `fi_mr_reg()`, `fi_mr_desc()`, `fi_av_insert()`, `fi_close()`
 
-### 05-ofi-plugin-protocols.md ✅
+### ofi-plugin-protocols.md ✅
 **Status**: 16 permalinks added
 **Key structs/functions linked**:
 - `struct nccl_ofi_tag`
-- Same libfabric functions as 04-ofi-plugin.md
+- Same libfabric functions as ofi-plugin.md
 
-### 07-freelist-allocator.md ✅
+### freelist-allocator.md ✅
 **Status**: 8 permalinks added
 **Structs linked (3)**:
 - `struct nccl_ofi_freelist_elem` → [include/nccl_ofi_freelist.h:19-23](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi_freelist.h#L19-L23)
@@ -35,7 +35,7 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 - `nccl_ofi_freelist_entry_free()` → [src/nccl_ofi_freelist.cpp:318](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_freelist.cpp#L318)
 - `fi_mr_reg()` → [include/rdma/fi_domain.h:413](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413)
 
-### 08-mr-cache-implementation.md ✅
+### mr-cache-implementation.md ✅
 **Status**: 6 permalinks added
 **Structs linked (2)**:
 - `struct nccl_ofi_reg_entry` → [include/nccl_ofi_mr.h:186-192](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi_mr.h#L186-L192)
@@ -47,7 +47,7 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 - `nccl_ofi_mr_cache_insert_entry()` → [src/nccl_ofi_mr.cpp:153](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_mr.cpp#L153)
 - `fi_mr_reg()` → [include/rdma/fi_domain.h:413](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413)
 
-### 09-libfabric-overview.md ✅
+### libfabric-overview.md ✅
 **Status**: 16 permalinks added in this session
 **Key structs/functions linked**:
 - `struct fi_info` → [fabric.h:198-232](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L198-L232)
@@ -64,24 +64,24 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 
 ## Completed Documents (No Linkable Content)
 
-### 00-overview.md ✅
+### overview.md ✅
 **Status**: No structs/functions from our repos to link (high-level overview)
 
-### 01-nccl-core.md ✅
+### nccl-core.md ✅
 **Status**: NCCL internal APIs only (not in our repos)
 
-### 02-nccl-collectives.md ✅
+### nccl-collectives.md ✅
 **Status**: NCCL internal algorithms (not in our repos)
 
-### 03-nccl-datapath.md ✅
+### nccl-datapath.md ✅
 **Status**: Conceptual overview, references libfabric functions already linked elsewhere
 
-### 06-topology-and-binding.md ✅
+### topology-and-binding.md ✅
 **Status**: Topology detection code examples, references libfabric functions already linked
 
 ## Completed High-Value Documents (Session 2)
 
-### 11-rdma-core-and-verbs.md ✅
+### rdma-core-and-verbs.md ✅
 **Status**: 15 permalinks added
 **Key structs/functions linked**:
 - `struct ibv_context` → [libibverbs/verbs.h:2069-2077](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2069-L2077)
@@ -93,7 +93,7 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 - `ibv_get_device_list()`, `ibv_open_device()`, `ibv_alloc_pd()`, `ibv_reg_mr()`, `ibv_dereg_mr()`
 - `ibv_create_cq()`, `ibv_create_qp()`, `ibv_post_send()`, `ibv_post_recv()`, `ibv_poll_cq()`
 
-### 13-kernel-efa-driver.md ✅
+### kernel-efa-driver.md ✅
 **Status**: 8 permalinks added
 **Key structs/functions linked**:
 - `struct efa_dev` → [kernel/linux/efa/src/efa.h:53-79](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa.h#L53-L79)
@@ -105,7 +105,7 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 - `efa_create_qp()` → [kernel/linux/efa/src/efa_verbs.c:1216](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.c#L1216)
 - `efa_create_cq()` → [kernel/linux/efa/src/efa_verbs.c:2147](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.c#L2147)
 
-### 10-efa-provider.md ✅
+### efa-provider.md ✅
 **Status**: 4 permalinks added
 **Key structs/functions linked**:
 - `struct efa_rdm_ep` → [prov/efa/src/rdm/efa_rdm_ep.h:46-120](https://github.com/ofiwg/libfabric/blob/6b9e629/prov/efa/src/rdm/efa_rdm_ep.h#L46-L120)
@@ -115,18 +115,18 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 ## Remaining Documents
 
 ### Documents reviewed - no new linkable content:
-- 20-rdma-memreg.md - References functions already linked in other documents ✅
-- 12-lkey-rkey-explained.md - References structs already linked ✅
-- 14-efa-driver.md - High-level driver overview, conceptual ✅
-- 19-threading-model.md - Threading concepts, no source code references ✅
-- 22-optimizations.md - Optimization techniques, conceptual ✅
+- rdma-memreg.md - References functions already linked in other documents ✅
+- lkey-rkey-explained.md - References structs already linked ✅
+- efa-driver.md - High-level driver overview, conceptual ✅
+- threading-model.md - Threading concepts, no source code references ✅
+- optimizations.md - Optimization techniques, conceptual ✅
 
 ### Documents with limited/no linkable content:
-- 15-cuda-memory.md - CUDA APIs (not in our repos)
-- 16-dmabuf-gpu-memory.md - Kernel dmabuf APIs (external)
-- 17-neuron-memory.md - AWS Neuron APIs (not in our repos)
-- 18-rocm-memory.md - AMD ROCm APIs (not in our repos)
-- 21-optimization-opportunities.md - Conceptual recommendations
+- cuda-memory.md - CUDA APIs (not in our repos)
+- dmabuf-gpu-memory.md - Kernel dmabuf APIs (external)
+- neuron-memory.md - AWS Neuron APIs (not in our repos)
+- rocm-memory.md - AMD ROCm APIs (not in our repos)
+- optimization-opportunities.md - Conceptual recommendations
 
 ## Summary Statistics
 
@@ -138,20 +138,20 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
   - 5 documents reviewed in session 2 (12, 14, 19, 20, 22)
 
 ### New Permalinks Added in Session 2
-- **11-rdma-core-and-verbs.md**: 15 permalinks
-- **13-kernel-efa-driver.md**: 8 permalinks
-- **10-efa-provider.md**: 4 permalinks
+- **rdma-core-and-verbs.md**: 15 permalinks
+- **kernel-efa-driver.md**: 8 permalinks
+- **efa-provider.md**: 4 permalinks
 - **Session 2 total**: 27 permalinks
 
 ### Total Permalinks Added
-- **04-ofi-plugin.md**: 42 permalinks
-- **05-ofi-plugin-protocols.md**: 16 permalinks
-- **07-freelist-allocator.md**: 8 permalinks
-- **08-mr-cache-implementation.md**: 6 permalinks
-- **09-libfabric-overview.md**: 16 permalinks
-- **10-efa-provider.md**: 4 permalinks
-- **11-rdma-core-and-verbs.md**: 15 permalinks
-- **13-kernel-efa-driver.md**: 8 permalinks
+- **ofi-plugin.md**: 42 permalinks
+- **ofi-plugin-protocols.md**: 16 permalinks
+- **freelist-allocator.md**: 8 permalinks
+- **mr-cache-implementation.md**: 6 permalinks
+- **libfabric-overview.md**: 16 permalinks
+- **efa-provider.md**: 4 permalinks
+- **rdma-core-and-verbs.md**: 15 permalinks
+- **kernel-efa-driver.md**: 8 permalinks
 - **Grand Total**: 115 permalinks
 
 ### Unique Structs/Functions Linked
@@ -171,32 +171,32 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 ## Key Accomplishments
 
 ### Session 1
-1. **Core libfabric API documented** in 09-libfabric-overview.md:
+1. **Core libfabric API documented** in libfabric-overview.md:
    - All major data structures (fi_info, fid_domain, fid_ep, fid_cq, fid_av, fid_mr)
    - All major operations (send, recv, tagged, RMA, completion)
    - Error handling structures
 
-2. **OFI Plugin architecture documented** in 04-ofi-plugin.md and 05-ofi-plugin-protocols.md:
+2. **OFI Plugin architecture documented** in ofi-plugin.md and ofi-plugin-protocols.md:
    - Connection management structures
    - Request handling
    - Protocol implementations
 
-3. **Memory management documented** in 07-freelist-allocator.md and 08-mr-cache-implementation.md:
+3. **Memory management documented** in freelist-allocator.md and mr-cache-implementation.md:
    - Freelist allocator structures
    - MR cache implementation
 
 ### Session 2
-4. **rdma-core/libibverbs API documented** in 11-rdma-core-and-verbs.md:
+4. **rdma-core/libibverbs API documented** in rdma-core-and-verbs.md:
    - Core data structures (ibv_context, ibv_pd, ibv_mr, ibv_qp, ibv_cq)
    - All major verbs operations (device, PD, MR, QP, CQ management)
    - EFA provider-specific implementations
 
-5. **EFA kernel driver documented** in 13-kernel-efa-driver.md:
+5. **EFA kernel driver documented** in kernel-efa-driver.md:
    - Kernel data structures (efa_dev, efa_qp, efa_cq, efa_mr)
    - Memory registration functions (efa_reg_mr, efa_dereg_mr)
    - Queue and completion management
 
-6. **EFA provider internals documented** in 10-efa-provider.md:
+6. **EFA provider internals documented** in efa-provider.md:
    - RDM endpoint structures (efa_rdm_ep, efa_rdm_pke)
    - Memory region wrappers (efa_mr)
 

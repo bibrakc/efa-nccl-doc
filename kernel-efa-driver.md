@@ -706,7 +706,7 @@ efa_sysfs.c (1KB)         - Sysfs attributes
 7. After setup, posting sends/recvs is just **memory writes** + **doorbell ring**
 
 **Related Documentation**:
-- [11-rdma-core-and-verbs.md](11-rdma-core-and-verbs.md) - Userspace library that talks to this driver
-- [16-dmabuf-gpu-memory.md](16-dmabuf-gpu-memory.md) - DMA-BUF implementation details
-- [14-efa-driver.md](14-efa-driver.md) - Higher-level EFA driver overview
-- [20-rdma-memreg.md](20-rdma-memreg.md) - Memory registration from all layers
+- [rdma-core-and-verbs.md](rdma-core-and-verbs.md) - Userspace library that talks to this driver
+- [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) - DMA-BUF implementation details
+- [efa-driver.md](efa-driver.md) - Higher-level EFA driver overview
+- [rdma-memreg.md](rdma-memreg.md) - Memory registration from all layers

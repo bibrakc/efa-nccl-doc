@@ -99,16 +99,16 @@ Communication patterns within NCCL:
 
 ## Document Organization
 
-- `01-nccl-core.md` - NCCL core concepts and operations
-- `02-nccl-collectives.md` - NCCL collective operations and algorithms
-- `03-nccl-datapath.md` - NCCL network data path and protocols
-- `04-ofi-plugin.md` - OFI NCCL plugin architecture
-- `09-libfabric-overview.md` - Libfabric architecture and APIs
-- `10-efa-provider.md` - EFA provider specifics in libfabric
-- `19-threading-model.md` - Threading and concurrency
-- `20-rdma-memreg.md` - RDMA operations and memory registration
-- `14-efa-driver.md` - EFA kernel driver architecture
-- `22-optimizations.md` - Passthrough modes and optimizations
+- `nccl-core.md` - NCCL core concepts and operations
+- `nccl-collectives.md` - NCCL collective operations and algorithms
+- `nccl-datapath.md` - NCCL network data path and protocols
+- `ofi-plugin.md` - OFI NCCL plugin architecture
+- `libfabric-overview.md` - Libfabric architecture and APIs
+- `efa-provider.md` - EFA provider specifics in libfabric
+- `threading-model.md` - Threading and concurrency
+- `rdma-memreg.md` - RDMA operations and memory registration
+- `efa-driver.md` - EFA kernel driver architecture
+- `optimizations.md` - Passthrough modes and optimizations
 
 ## Performance Considerations
 

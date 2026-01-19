@@ -739,8 +739,8 @@ cd gdrcopy/tests
 7. **MR caching still critical** - registration expensive (100-500 μs)
 
 **Related Documentation**:
-- [16-dmabuf-gpu-memory.md](16-dmabuf-gpu-memory.md) - DMA-BUF framework (used by CUDA)
-- [17-neuron-memory.md](17-neuron-memory.md) - AWS Neuron (different approach)
-- [18-rocm-memory.md](18-rocm-memory.md) - AMD ROCm (HIP API, no flush needed)
-- [08-mr-cache-implementation.md](08-mr-cache-implementation.md) - MR cache (critical for CUDA)
-- [13-kernel-efa-driver.md](13-kernel-efa-driver.md) - Kernel dmabuf import
+- [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) - DMA-BUF framework (used by CUDA)
+- [neuron-memory.md](neuron-memory.md) - AWS Neuron (different approach)
+- [rocm-memory.md](rocm-memory.md) - AMD ROCm (HIP API, no flush needed)
+- [mr-cache-implementation.md](mr-cache-implementation.md) - MR cache (critical for CUDA)
+- [kernel-efa-driver.md](kernel-efa-driver.md) - Kernel dmabuf import

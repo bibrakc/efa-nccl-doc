@@ -506,7 +506,7 @@ export NCCL_DEBUG=INFO
 7. AWS-specific, works on trn1/inf1/inf2 instances
 
 **Related Documentation**:
-- [16-dmabuf-gpu-memory.md](16-dmabuf-gpu-memory.md) - CUDA/ROCm DMA-BUF approach (different!)
+- [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) - CUDA/ROCm DMA-BUF approach (different!)
 - [17-rocm-memory.md](17-rocm-memory.md) - AMD ROCm memory registration
-- [08-mr-cache-implementation.md](08-mr-cache-implementation.md) - MR cache (works with Neuron keys)
-- [13-kernel-efa-driver.md](13-kernel-efa-driver.md) - EFA kernel driver integration
+- [mr-cache-implementation.md](mr-cache-implementation.md) - MR cache (works with Neuron keys)
+- [kernel-efa-driver.md](kernel-efa-driver.md) - EFA kernel driver integration

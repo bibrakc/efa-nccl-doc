@@ -21,7 +21,7 @@ Based on analysis of the NCCL + OFI + libfabric + EFA stack, this document ident
 
 ### Current Performance Impact
 
-From [20-rdma-memreg.md](20-rdma-memreg.md):
+From [rdma-memreg.md](rdma-memreg.md):
 
 ```
 Operation                   Time (typical)
@@ -175,7 +175,7 @@ void init_gpu_pool() {
 
 **Current Issue**: memhooks/userfaultfd overhead
 
-From [20-rdma-memreg.md](20-rdma-memreg.md):
+From [rdma-memreg.md](rdma-memreg.md):
 
 ```bash
 # memhooks: LD_PRELOAD intercepts every malloc/free
@@ -212,7 +212,7 @@ void training_mode_end() {
 
 ### Current Latency Breakdown
 
-From [22-optimizations.md](22-optimizations.md):
+From [optimizations.md](optimizations.md):
 
 ```
 Component                    Time (μs)
@@ -341,7 +341,7 @@ void* desc = entry->desc_cached;  // No function call
 
 ### Current State
 
-From [02-nccl-collectives.md](02-nccl-collectives.md):
+From [nccl-collectives.md](nccl-collectives.md):
 
 ```
 Message Size     Protocol
@@ -413,7 +413,7 @@ Proposed Hybrid:
 
 **Opportunity**: Leverage EFA's eager/rendezvous efficiently
 
-From [10-efa-provider.md](10-efa-provider.md):
+From [efa-provider.md](efa-provider.md):
 
 ```
 Eager threshold: 64 KB (configurable via FI_EFA_RDM_LONG_MSG_SIZE)
@@ -444,7 +444,7 @@ NCCL_PROTO_LL128_MAX_SIZE=65536   # Match EFA's 64KB eager
 
 ### Current State
 
-From [10-efa-provider.md](10-efa-provider.md):
+From [efa-provider.md](efa-provider.md):
 
 ```
 p4d.24xlarge: 4x 100 Gbps EFA (400 Gbps total)
@@ -540,7 +540,7 @@ void rebalance_nics() {
 
 ### Current State
 
-From [19-threading-model.md](19-threading-model.md):
+From [threading-model.md](threading-model.md):
 
 ```c
 // NCCL proxy thread
@@ -649,7 +649,7 @@ void smart_progress() {
 
 ### Current Issues
 
-From [19-threading-model.md](19-threading-model.md):
+From [threading-model.md](threading-model.md):
 
 ```
 Cross-NUMA access:
@@ -738,7 +738,7 @@ lspci -vv | grep -A20 "Ethernet controller: Amazon"
 
 ### Current Overhead
 
-From [03-nccl-datapath.md](03-nccl-datapath.md):
+From [nccl-datapath.md](nccl-datapath.md):
 
 ```
 Copies in data path:

@@ -584,6 +584,6 @@ sudo chmod 666 /dev/infiniband/uverbs*
 6. Device capabilities are queried via `ibv_query_device()`
 
 **Related Documentation**:
-- [14-efa-driver.md](14-efa-driver.md) - Kernel driver that rdma-core talks to
-- [20-rdma-memreg.md](20-rdma-memreg.md) - Memory registration details
-- [16-dmabuf-gpu-memory.md](16-dmabuf-gpu-memory.md) - GPU memory via dmabuf
+- [efa-driver.md](efa-driver.md) - Kernel driver that rdma-core talks to
+- [rdma-memreg.md](rdma-memreg.md) - Memory registration details
+- [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) - GPU memory via dmabuf

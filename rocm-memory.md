@@ -559,7 +559,7 @@ if (mem_type != hipMemoryTypeDevice) {
 7. Fallback to legacy methods if dmabuf unsupported
 
 **Related Documentation**:
-- [16-dmabuf-gpu-memory.md](16-dmabuf-gpu-memory.md) - DMA-BUF framework (used by ROCm)
+- [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) - DMA-BUF framework (used by ROCm)
 - [16-neuron-memory.md](16-neuron-memory.md) - AWS Neuron (different approach, no dmabuf)
-- [08-mr-cache-implementation.md](08-mr-cache-implementation.md) - MR cache (works with ROCm)
-- [13-kernel-efa-driver.md](13-kernel-efa-driver.md) - Kernel driver dmabuf import
+- [mr-cache-implementation.md](mr-cache-implementation.md) - MR cache (works with ROCm)
+- [kernel-efa-driver.md](kernel-efa-driver.md) - Kernel driver dmabuf import
