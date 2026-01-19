@@ -118,53 +118,6 @@ EFA Hardware (p4d: 4×100G, p5+: 32×100G EFAv3)
 5. **CPU Affinity** - Pin proxy threads to avoid NUMA remote access
 6. **Kernel Bypass** - Direct user-space access to hardware
 
-## Common Configurations
-
-### Production (High Bandwidth)
-
-```bash
-# Memory registration
-FI_MR_CACHE_MONITOR=memhooks
-FI_MR_CACHE_MAX_SIZE=unlimited
-
-# EFA
-FI_EFA_ENABLE_SHM_TRANSFER=0
-FI_EFA_USE_DEVICE_RDMA=1
-FI_EFA_TX_SIZE=256
-FI_EFA_RX_SIZE=256
-
-# NCCL
-NCCL_ALGO=Ring
-NCCL_PROTO=Simple
-NCCL_NCHANNELS=8
-NCCL_DEBUG=WARN
-```
-
-### Low Latency
-
-```bash
-# For small messages, frequent collectives
-NCCL_ALGO=Tree
-NCCL_PROTO=LL,LL128
-NCCL_NCHANNELS=4
-NCCL_CHUNK_SIZE=65536
-```
-
-### Debugging
-
-```bash
-# Verbose logging
-NCCL_DEBUG=INFO
-NCCL_DEBUG_SUBSYS=INIT,COLL,NET,PROXY
-
-# Libfabric logging
-FI_LOG_LEVEL=info
-FI_LOG_PROV=efa
-
-# Graph dump
-NCCL_GRAPH_DUMP_FILE=nccl_graph.txt
-```
-
 ## Performance Targets
 
 ### Latency (Single Message)
