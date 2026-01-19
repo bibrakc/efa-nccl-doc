@@ -28,7 +28,7 @@ struct ibv_mr {
 
 ### Generation
 
-From [20-rdma-memreg.md](doc/20-rdma-memreg.md):
+From [20-rdma-memreg.md](20-rdma-memreg.md):
 
 ```c
 // When memory is registered
@@ -234,7 +234,7 @@ fi_write(ep, my_send_buf, size, desc,
 
 ### Key Generation in EFA Driver
 
-From [14-efa-driver.md](doc/14-efa-driver.md):
+From [14-efa-driver.md](14-efa-driver.md):
 
 ```c
 // EFA kernel driver
@@ -510,6 +510,6 @@ Historical reasons and flexibility:
 
 ## Further Reading
 
-- [09-libfabric-overview.md](doc/09-libfabric-overview.md) - Memory registration in libfabric
-- [20-rdma-memreg.md](doc/20-rdma-memreg.md) - Complete RDMA and memory registration details
-- [14-efa-driver.md](doc/14-efa-driver.md) - EFA driver implementation of key generation
+- [09-libfabric-overview.md](09-libfabric-overview.md) - Memory registration in libfabric
+- [20-rdma-memreg.md](20-rdma-memreg.md) - Complete RDMA and memory registration details
+- [14-efa-driver.md](14-efa-driver.md) - EFA driver implementation of key generation
