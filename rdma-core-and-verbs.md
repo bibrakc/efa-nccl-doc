@@ -6,6 +6,25 @@
 
 **GitHub**: [rdma-core](https://github.com/linux-rdma/rdma-core/tree/6e9643e)
 
+## Critical Data Path Component
+
+**rdma-core is in the hot data path for every NCCL message.** The EFA provider in libfabric directly calls `ibv_post_send()`, `ibv_post_recv()`, and `ibv_poll_cq()` for every network operation ([prov/efa/src/efa_data_path_ops.h:78](https://github.com/ofiwg/libfabric/blob/6b9e629/prov/efa/src/efa_data_path_ops.h#L78)):
+
+```c
+// From libfabric EFA provider - called for EVERY message
+static inline int efa_qp_post_recv(struct efa_qp *qp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad)
+{
+    return ibv_post_recv(qp->ibv_qp, wr, bad);  // Direct call to rdma-core
+}
+```
+
+**Performance Impact:**
+- `ibv_post_send()`: ~100-200 ns per call (memory writes + doorbell)
+- `ibv_post_recv()`: ~100-200 ns per call (memory writes)
+- `ibv_poll_cq()`: ~50-150 ns per call (memory reads)
+
+These operations are **zero-syscall** - they only access memory-mapped hardware queues in userspace, making them extremely fast. This is why understanding rdma-core is critical for NCCL optimization.
+
 ## Architecture Position
 
 ```
@@ -313,6 +332,35 @@ static int efa_mr_reg(struct fid *fid, const void *buf, size_t len,
     return 0;
 }
 ```
+
+### Complete Data Path Flow
+
+Every NCCL message goes through these layers:
+
+```
+NCCL AllReduce
+    ↓
+OFI Plugin: nccl_net_ofi_isend()
+    ↓
+Libfabric: fi_send()
+    ↓
+EFA Provider: efa_qp_post_send()
+    ↓
+rdma-core: ibv_post_send() ← 100-200 ns, NO syscall
+    ↓
+EFA Provider (rdma-core): efa_post_send()
+    ↓
+Userspace: Write WQE to mmap'd send queue
+    ↓
+Userspace: MMIO write to doorbell register
+    ↓
+EFA Hardware: DMA from GPU memory, transmit packet
+```
+
+**Key Point:** From `fi_send()` to hardware notification takes only ~200-300 ns total, with rdma-core's `ibv_post_send()` consuming ~100-200 ns of that. This is achieved through:
+1. **Zero syscalls** - all queue access via mmap
+2. **Direct memory writes** - WQEs written to userspace buffers
+3. **Single doorbell** - one MMIO write to notify hardware
 
 ## EFA-Specific Extensions (efadv.h)
 
