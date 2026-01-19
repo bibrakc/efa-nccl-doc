@@ -25,7 +25,7 @@ This documentation provides in-depth coverage of the complete stack used for GPU
 
 - **[threading-model.md](threading-model.md)** - Threading across the stack, proxy threads, concurrency
 - **[rdma-memreg.md](rdma-memreg.md)** - RDMA operations, memory registration, caching strategies
-- **[efa-driver.md](efa-driver.md)** - EFA kernel driver architecture, queue management, GPUDirect
+- **[efa-driver.md](efa-driver.md)** - EFA kernel driver architecture, queue management, zero-copy data path
 
 ### Performance
 
