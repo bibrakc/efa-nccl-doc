@@ -10,28 +10,28 @@ The OFI NCCL plugin implements a **custom memory registration (MR) cache** to av
 
 ## Why MR Cache Matters
 
-**Performance Impact**:
+**Performance Impact** (estimated):
 ```
 Without cache (every operation registers memory):
   fi_mr_reg()    → 100-500 μs  // ([include/rdma/fi_domain.h:413](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413))
   fi_send()      → 10-20 μs
   fi_mr_dereg()  → 50-200 μs
-  Total: 160-720 μs per operation
+  Total: ~160-720 μs per operation
 
 With cache (first operation registers, rest hit cache):
   First call:
-    fi_mr_reg()       → 500 μs (one time)
-    cache_insert()    → 1 μs
-    fi_send()         → 20 μs
-    Total: 521 μs
+    fi_mr_reg()       → ~500 μs (one time)
+    cache_insert()    → ~1 μs
+    fi_send()         → ~20 μs
+    Total: ~521 μs
 
   Subsequent calls:
-    cache_lookup()    → 0.5 μs (fast!)
-    fi_send()         → 20 μs
-    Total: 20.5 μs
+    cache_lookup()    → ~0.5 μs (fast!)
+    fi_send()         → ~20 μs
+    Total: ~20.5 μs
 ```
 
-**Speedup**: Up to **25x faster** for cache hits (20.5 μs vs 521 μs)
+**Speedup**: Approximately **25x faster** for cache hits (~20.5 μs vs ~521 μs)
 
 **Target Hit Rate**: >99% in steady state
 
@@ -386,9 +386,9 @@ int select_efa_device(int gpu_id) {
 }
 ```
 
-**NUMA Impact on MR Cache**:
-- **Local NUMA**: Memory registration 100-500 μs
-- **Remote NUMA**: Memory registration 150-700 μs (30-40% slower)
+**NUMA Impact on MR Cache** (estimated):
+- **Local NUMA**: Memory registration ~100-500 μs
+- **Remote NUMA**: Memory registration ~150-700 μs (approximately 30-40% slower)
 - **Cache benefit**: Even more important for remote NUMA (amortize slow registration)
 
 ## Performance Tuning
@@ -471,7 +471,7 @@ while (lo < hi) {
 }
 ```
 
-**Impact**: 5-10x faster lookup for large caches (1000+ entries)
+**Impact**: Estimated 5-10x faster lookup for large caches (1000+ entries)
 
 ### P1: Hash Table Instead of Sorted Array
 
@@ -505,7 +505,7 @@ Request:         [0x1500 ─── 0x2500)  ← Should hit but doesn't!
 
 **Solution**: Use interval tree (e.g., red-black tree with interval query)
 
-**Impact**: Higher hit rate (99.5% → 99.9%), but O(log N) complexity
+**Impact**: Potentially higher hit rate (estimated 99.5% → 99.9%), but O(log N) complexity
 
 ### P3: Lock-Free Lookup
 
@@ -529,7 +529,7 @@ insert_and_publish_rcu(cache, key, handle);
 pthread_mutex_unlock(&cache->lock);
 ```
 
-**Impact**: 2-3x faster lookup under contention
+**Impact**: Estimated 2-3x faster lookup under contention
 
 ## Cache Invalidation (libfabric Level)
 
@@ -604,7 +604,7 @@ NCCL_OFI_INFO("Cache usage: %zu / %zu entries, hit rate: %.1f%%",
 | Typical insert time | 1-2 μs |
 | Memory per entry | ~48 bytes |
 | Target hit rate | >99% |
-| Performance gain | 25x faster vs re-registration |
+| Performance gain | Approximately 25x faster vs re-registration |
 
 **Key Takeaways**:
 1. MR cache is **critical** - eliminates 100-500 μs registration overhead

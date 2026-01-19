@@ -573,7 +573,7 @@ Subsequent Sends (cached):
   Total:    51 μs
 ```
 
-**Massive speedup for repeated transfers**
+**Significant speedup for repeated transfers**
 
 ## Summary
 

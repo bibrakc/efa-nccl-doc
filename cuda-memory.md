@@ -420,9 +420,9 @@ export NCCL_DEBUG=WARN
 
 **Use Case**: Small message sends where CPU needs to read GPU memory.
 
-**Performance**:
-- Traditional `cudaMemcpy()`: 10-50 μs
-- **GDRCopy**: 1-5 μs (5-10x faster!)
+**Performance** (estimated):
+- Traditional `cudaMemcpy()`: ~10-50 μs
+- **GDRCopy**: ~1-5 μs (approximately 5-10x faster)
 
 ### Architecture
 
@@ -589,7 +589,7 @@ if (ret != 0) {
 | `cuMemGetHandleForAddressRange()` | 10-50 μs | DMA-BUF export |
 | `cuFlushGPUDirectRDMAWrites()` | 1-5 μs | Cache flush |
 | **GDRCopy `gdr_pin_buffer()`** | 100-300 μs | One-time registration |
-| **GDRCopy `gdr_copy_to_mapping()`** | **1-5 μs** | 5-10x faster than cudaMemcpy! |
+| **GDRCopy `gdr_copy_to_mapping()`** | **~1-5 μs** | Approximately 5-10x faster than cudaMemcpy |
 | Traditional `cudaMemcpy()` | 10-50 μs | Slow |
 
 ## Configuration and Tuning
@@ -725,15 +725,15 @@ cd gdrcopy/tests
 | **API choice** | Driver API (`cu*`) for stability |
 | **DMA-BUF** | CUDA 11.7+ via `cuMemGetHandleForAddressRange()` |
 | **GPUDirect flush** | CUDA 11.3+ via `cuFlushGPUDirectRDMAWrites()` |
-| **GDRCopy** | Optional, 5-10x faster than `cudaMemcpy()` |
+| **GDRCopy** | Optional, approximately 5-10x faster than `cudaMemcpy()` |
 | **Entry points** | CUDA 13: versioned, CUDA 12: legacy |
-| **Performance** | Function resolution: 10-50 μs, GDRCopy copy: 1-5 μs |
+| **Performance** | Function resolution: ~10-50 μs, GDRCopy copy: ~1-5 μs |
 
 **Key Takeaways**:
 1. **Dynamic loading** enables cross-version compatibility without recompilation
 2. **Driver API** preferred over Runtime API for ABI stability
-3. **GPUDirect flush** needed on some architectures for correctness (1-5 μs overhead)
-4. **GDRCopy** optional but highly recommended for small message performance
+3. **GPUDirect flush** needed on some architectures for correctness (~1-5 μs overhead)
+4. **GDRCopy** optional but highly recommended for small message performance (significant speedup)
 5. **DMA-BUF** modern approach (CUDA 11.7+), cleaner than legacy GDR
 6. **Version detection** at runtime determines available features
 7. **MR caching still critical** - registration expensive (100-500 μs)

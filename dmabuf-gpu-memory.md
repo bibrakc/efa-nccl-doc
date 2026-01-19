@@ -642,7 +642,7 @@ static int ib_umem_dmabuf_map_pages(struct ib_umem_dmabuf *umem)
 1. DMA-BUF is the **modern, standard way** to register GPU memory for RDMA
 2. Requires kernel 5.12+, libfabric 1.20+, EFA Gen 4+
 3. **Vendor-neutral**: Works with NVIDIA, AMD, Intel GPUs
-4. **Better IOMMU efficiency**: Page merging reduces entries by 100-500x
+4. **Better IOMMU efficiency**: Page merging can significantly reduce IOMMU entries (estimated 100-500x reduction)
 5. Same performance as legacy GDR, but cleaner and more maintainable
 6. Registration is still expensive (100-500 μs) - **caching is critical**
 

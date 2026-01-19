@@ -60,7 +60,7 @@ Application
 Hardware
     ↓ DMA directly from user memory
 
-Overhead: ~0.1-0.5 μs (100x faster!)
+Overhead: ~0.1-0.5 μs (significant speedup vs syscalls)
 ```
 
 **Mechanisms:**

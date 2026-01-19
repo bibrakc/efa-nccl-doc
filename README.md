@@ -37,8 +37,8 @@ This documentation provides in-depth coverage of the complete stack used for GPU
 - **[lkey-rkey-explained.md](lkey-rkey-explained.md)** - Understanding local and remote keys in RDMA
 - **[ofi-plugin-protocols.md](ofi-plugin-protocols.md)** - Connection establishment and send/recv protocols
 - **[topology-and-binding.md](topology-and-binding.md)** - Topology detection and interface binding mechanisms
-- **[freelist-allocator.md](freelist-allocator.md)** - Freelist allocator for high-performance object pooling (20-100x faster than malloc)
-- **[mr-cache-implementation.md](mr-cache-implementation.md)** - Memory registration cache implementation details (25x speedup)
+- **[freelist-allocator.md](freelist-allocator.md)** - Freelist allocator for high-performance object pooling (estimated 20-100x faster than malloc)
+- **[mr-cache-implementation.md](mr-cache-implementation.md)** - Memory registration cache implementation details (approximately 25x speedup)
 - **[rdma-core-and-verbs.md](rdma-core-and-verbs.md)** - rdma-core library and libibverbs API
 - **[kernel-efa-driver.md](kernel-efa-driver.md)** - Linux kernel EFA driver internals
 
@@ -111,7 +111,7 @@ EFA Hardware (p4d: 4×100G, p5+: 32×100G EFAv3)
 
 ### Critical Performance Factors
 
-1. **Memory Registration Caching** - 100-500x speedup for repeated transfers
+1. **Memory Registration Caching** - Estimated 100-500x speedup for repeated transfers
 2. **Algorithm Selection** - Ring for large messages, Tree for small
 3. **Protocol Selection** - LL for latency, Simple for bandwidth
 4. **Multi-rail** - Utilize all EFA adapters (4-8 per instance)

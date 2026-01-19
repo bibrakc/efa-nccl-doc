@@ -6,8 +6,8 @@ Based on analysis of the NCCL + OFI + libfabric + EFA stack, this document ident
 
 ## Optimization Priority Matrix
 
-| Priority | Optimization Area | Expected Gain | Complexity | Pages |
-|----------|------------------|---------------|------------|-------|
+| Priority | Optimization Area | Estimated Gain | Complexity | Pages |
+|----------|------------------|----------------|------------|-------|
 | 🔥 P0 | Memory Registration Caching | 100-500x | Medium | [Memory Reg](#1-memory-registration-bottlenecks) |
 | 🔥 P0 | Reduce Software Overhead in Hot Path | 2-5x | High | [Hot Path](#2-hot-path-software-overhead) |
 | 🔴 P1 | Protocol Selection Tuning | 1.5-3x | Low | [Protocol](#3-protocol-selection) |
@@ -85,7 +85,7 @@ struct mr_cache_entry_v2 {
 // Instead of registering many 1 MB chunks
 ```
 
-**Expected Gain**: 50-100x for workloads with many small buffers in larger region
+**Expected Gain**: Estimated 50-100x for workloads with many small buffers in larger region
 
 **Implementation**:
 - Modify OFI plugin MR cache to support range queries
@@ -202,7 +202,7 @@ void training_mode_end() {
 }
 ```
 
-**Expected Gain**: 2-5% reduction in allocation overhead
+**Expected Gain**: Estimated 2-5% reduction in allocation overhead
 
 **Risk**: Stale cache entries if buffers freed unexpectedly
 
@@ -275,7 +275,7 @@ static inline ncclResult_t isend_fastpath(
 }
 ```
 
-**Expected Gain**: 30-50% reduction in plugin overhead (1-2 μs → 0.5-1 μs)
+**Expected Gain**: Estimated 30-50% reduction in plugin overhead (1-2 μs → 0.5-1 μs)
 
 **Implementation**:
 - Separate fast/slow paths
@@ -309,7 +309,7 @@ static inline struct nccl_ofi_req* get_req_fast() {
 }
 ```
 
-**Expected Gain**: 0.1-0.3 μs per operation
+**Expected Gain**: Estimated 0.1-0.3 μs per operation
 
 #### 2.3 Descriptor Caching (P1)
 
@@ -333,7 +333,7 @@ struct mr_cache_entry {
 void* desc = entry->desc_cached;  // No function call
 ```
 
-**Expected Gain**: 0.1-0.2 μs per operation
+**Expected Gain**: Estimated 0.1-0.2 μs per operation
 
 ---
 
@@ -383,7 +383,7 @@ void adjust_thresholds() {
 }
 ```
 
-**Expected Gain**: 10-30% for workloads not matching default thresholds
+**Expected Gain**: Estimated 10-30% for workloads not matching default thresholds
 
 **Implementation**:
 - Measure protocol performance during warmup
@@ -407,7 +407,7 @@ Proposed Hybrid:
   start    bandwidth
 ```
 
-**Expected Gain**: 20-40% for 100KB-500KB messages (common gradient sizes)
+**Expected Gain**: Estimated 20-40% for 100KB-500KB messages (common gradient sizes)
 
 #### 3.3 EFA-Specific Protocol (P0)
 
@@ -436,7 +436,7 @@ FI_EFA_RDM_LONG_MSG_SIZE=2097152  # Match NCCL's 2MB threshold
 NCCL_PROTO_LL128_MAX_SIZE=65536   # Match EFA's 64KB eager
 ```
 
-**Expected Gain**: 15-25% for 64KB-2MB range
+**Expected Gain**: Estimated 15-25% for 64KB-2MB range
 
 ---
 
@@ -494,7 +494,7 @@ int select_nic_smart(int channel, size_t msg_size) {
 }
 ```
 
-**Expected Gain**: 10-20% better load balancing, especially for imbalanced workloads
+**Expected Gain**: Estimated 10-20% better load balancing, especially for imbalanced workloads
 
 #### 4.2 Per-Message-Size NIC Affinity (P1)
 
@@ -511,7 +511,7 @@ if (size < 64KB) {
 }
 ```
 
-**Expected Gain**: 5-15% latency improvement for small messages
+**Expected Gain**: Estimated 5-15% latency improvement for small messages
 
 #### 4.3 Adaptive Multi-Rail (P0)
 
@@ -532,7 +532,7 @@ void rebalance_nics() {
 }
 ```
 
-**Expected Gain**: 20-40% in congested multi-tenant environments
+**Expected Gain**: Estimated 20-40% in congested multi-tenant environments
 
 ---
 
@@ -619,7 +619,7 @@ if (ret > 0) {
 }
 ```
 
-**Expected Gain**: 10-15% throughput improvement for high message rates
+**Expected Gain**: Estimated 10-15% throughput improvement for high message rates
 
 #### 5.3 Event-Driven for Low QPS (P3)
 
@@ -641,7 +641,7 @@ void smart_progress() {
 }
 ```
 
-**Expected Gain**: 50-90% CPU reduction for low QPS workloads
+**Expected Gain**: Estimated 50-90% CPU reduction for low QPS workloads
 
 ---
 
@@ -681,7 +681,7 @@ void* allocate_optimal_buffer(size_t size, int gpu_id) {
 }
 ```
 
-**Expected Gain**: 10-20% for proxy thread buffer access
+**Expected Gain**: Estimated 10-20% for proxy thread buffer access
 
 #### 6.2 Proxy Thread Affinity (P2)
 
@@ -711,7 +711,7 @@ void pin_proxy_thread(int gpu_id) {
 }
 ```
 
-**Expected Gain**: 10-15% reduction in proxy thread overhead
+**Expected Gain**: Estimated 10-15% reduction in proxy thread overhead
 
 #### 6.3 NIC-GPU-NUMA Alignment (P1)
 
@@ -730,7 +730,7 @@ lspci -vv | grep -A20 "Ethernet controller: Amazon"
 # GPU 0 (NUMA 0) → EFA 0 (NUMA 0)  ← GOOD!
 ```
 
-**Expected Gain**: 15-25% if currently misaligned
+**Expected Gain**: Estimated 15-25% if currently misaligned
 
 ---
 
@@ -767,7 +767,7 @@ GPU buffer → Register directly → Send (zero-copy)
 - Alignment requirements
 - May hurt pipelining
 
-**Expected Gain**: 5-10% for large messages if buffer reused
+**Expected Gain**: Estimated 5-10% for large messages if buffer reused
 
 #### 7.2 GPUDirect Async (P3)
 
@@ -785,7 +785,7 @@ ncclAllReduce(intermediate_result, ..., stream2);  // Concurrent
 cudaKernel<<<stream1>>>(next_layer);
 ```
 
-**Expected Gain**: 10-30% wall-clock time reduction via overlap
+**Expected Gain**: Estimated 10-30% wall-clock time reduction via overlap
 
 ---
 
@@ -811,7 +811,7 @@ ncclAllReduce(temp_buf, 10MB, ...);  // 1x overhead
 split_buffers(temp_buf, bufs, 10);
 ```
 
-**Expected Gain**: 30-50% for many small collectives
+**Expected Gain**: Estimated 30-50% for many small collectives
 
 #### 8.2 Pipeline Depth Tuning (P2)
 
@@ -828,7 +828,7 @@ NCCL_BUFFSIZE=4194304
 # Large messages: Larger buffers, better efficiency
 ```
 
-**Expected Gain**: 10-20% better pipeline utilization
+**Expected Gain**: Estimated 10-20% better pipeline utilization
 
 ---
 
@@ -839,48 +839,48 @@ NCCL_BUFFSIZE=4194304
 1. **Memory Registration Cache Enhancement**
    - Implement range-based caching
    - Add predictive pre-registration
-   - Expected: 100-500x improvement
+   - Expected: Estimated 100-500x improvement
 
 2. **OFI Plugin Fast Path**
    - Inline hot path operations
    - Reduce function call overhead
-   - Expected: 30-50% latency reduction
+   - Expected: Estimated 30-50% latency reduction
 
 3. **EFA Protocol Alignment**
    - Align NCCL thresholds with EFA eager/rendezvous
-   - Expected: 15-25% for 64KB-2MB messages
+   - Expected: Estimated 15-25% for 64KB-2MB messages
 
 4. **Adaptive Multi-Rail**
    - Dynamic load balancing across NICs
-   - Expected: 20-40% in congested scenarios
+   - Expected: Estimated 20-40% in congested scenarios
 
 ### Short-term (P1) - High Impact, Lower Risk
 
 5. **Dynamic Protocol Thresholds**
    - Tune per-instance type
-   - Expected: 10-30% for specific workloads
+   - Expected: Estimated 10-30% for specific workloads
 
 6. **NUMA-Aware NIC Selection**
    - Topology-aware assignment
-   - Expected: 15-25% if misaligned
+   - Expected: Estimated 15-25% if misaligned
 
 7. **Request Pooling**
    - Pre-allocated request objects
-   - Expected: 0.1-0.3 μs per operation
+   - Expected: ~0.1-0.3 μs per operation
 
 ### Medium-term (P2) - Moderate Impact
 
 8. **Adaptive Polling**
    - CPU-efficient progress
-   - Expected: 10-30% CPU reduction
+   - Expected: Estimated 10-30% CPU reduction
 
 9. **NUMA-Aware Allocation**
    - Explicit buffer placement
-   - Expected: 10-20% for memory-bound
+   - Expected: Estimated 10-20% for memory-bound
 
 10. **Operation Batching**
     - Reduce overhead for small ops
-    - Expected: 30-50% for batched workloads
+    - Expected: Estimated 30-50% for batched workloads
 
 ---
 
@@ -929,17 +929,17 @@ Software overhead       5-10 μs    < 2 μs
 
 ## Conclusion
 
-**Highest Impact Optimizations (by expected total gain):**
+**Highest Impact Optimizations (by estimated potential gain):**
 
-1. ⭐ **Memory Registration** - 100-500x potential (P0)
-2. ⭐ **Hot Path Optimization** - 2-5x latency reduction (P0)
-3. ⭐ **Multi-Rail Enhancement** - 2-4x in multi-NIC setups (P1)
-4. **Protocol Tuning** - 1.5-3x for specific sizes (P1)
-5. **NUMA Optimization** - 10-20% overall (P2)
+1. ⭐ **Memory Registration** - Estimated 100-500x potential (P0)
+2. ⭐ **Hot Path Optimization** - Estimated 2-5x latency reduction (P0)
+3. ⭐ **Multi-Rail Enhancement** - Estimated 2-4x in multi-NIC setups (P1)
+4. **Protocol Tuning** - Estimated 1.5-3x for specific sizes (P1)
+5. **NUMA Optimization** - Estimated 10-20% overall (P2)
 
 **Estimated Cumulative Impact**:
-- **Best case**: 10-50x for cache-miss-heavy workloads
-- **Typical case**: 2-5x overall performance improvement
-- **Worst case**: 30-50% improvement (still significant)
+- **Best case**: Estimated 10-50x for cache-miss-heavy workloads
+- **Typical case**: Estimated 2-5x overall performance improvement
+- **Worst case**: Estimated 30-50% improvement (still significant)
 
 Next steps: Implement P0 items first, measure, then proceed to P1/P2 based on specific workload characteristics.

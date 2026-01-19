@@ -363,7 +363,7 @@ With cache:
   AllReduce call 3: Cache hit (1 μs) + Transfer (100 μs) = 101 μs
 ```
 
-**6x speedup for subsequent calls!**
+**Approximately 6x speedup for subsequent calls!**
 
 ### Cache Structure
 
@@ -852,8 +852,8 @@ Driver (implicit tracking)
 - [ ] Tune cache size limits
 
 **Performance Impact:**
-- **Without cache**: 500 μs overhead per transfer
+- **Without cache**: ~500 μs overhead per transfer
 - **With cache**: < 1 μs overhead per transfer
-- **Speedup**: 100-500x for repeated transfers!
+- **Speedup**: Estimated 100-500x for repeated transfers!
 
 **Next**: EFA driver architecture and capabilities.

@@ -289,7 +289,7 @@ Send operation:
 Total overhead: <150 ns
 ```
 
-**Speedup**: ~20-100x reduction in allocation overhead
+**Speedup**: Estimated 20-100x reduction in allocation overhead
 
 ### Memory Registration Benefit
 
@@ -315,7 +315,7 @@ Send eager message:
 Total: <150 ns
 ```
 
-**Speedup**: ~1000-5000x for small messages
+**Speedup**: Estimated 1000-5000x for small messages
 
 ## Tuning Parameters
 
@@ -372,7 +372,7 @@ DEFINED    - Entry initialized and ready to use
 - Growth: ~100-500 μs (when adding new block)
 
 ### P1 Optimization: Lock-Free Freelist
-**Impact**: 2-3x faster allocation (~20-30 ns)
+**Impact**: Estimated 2-3x faster allocation (~20-30 ns)
 
 Replace mutex with atomic operations:
 ```cpp
@@ -394,7 +394,7 @@ do {
 - ABA problem requires versioned pointers
 
 ### P2 Optimization: Per-Thread Caches
-**Impact**: 5-10x faster allocation (~5-10 ns)
+**Impact**: Estimated 5-10x faster allocation (~5-10 ns)
 
 Thread-local cache reduces contention:
 ```cpp
@@ -463,8 +463,8 @@ The freelist allocator is a **critical performance component**:
 
 | Metric | Impact |
 |--------|--------|
-| Allocation overhead | 20-100x faster than malloc |
-| MR registration | 1000-5000x faster (pre-registered blocks) |
+| Allocation overhead | Estimated 20-100x faster than malloc |
+| MR registration | Estimated 1000-5000x faster (pre-registered blocks) |
 | Latency contribution | <100 ns (vs 2-10 μs without freelist) |
 | Memory efficiency | ~95% utilization (page-padded entries) |
 
