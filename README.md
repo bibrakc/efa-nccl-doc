@@ -152,32 +152,6 @@ EFA Hardware (p4d: 4×100G, p5+: 32×100G EFAv3)
 | 128 MB    | 5-10 ms | 100+ GB/s     | Typical gradient size |
 | 1 GB      | 40-80 ms| 100+ GB/s     | Large model |
 
-## Troubleshooting
-
-### Low Bandwidth
-
-Check:
-- MR cache hit rate (enable logging)
-- Channel count (NCCL_NCHANNELS)
-- Algorithm selection (use Ring for large)
-- CPU affinity (avoid NUMA remote)
-
-### High Latency
-
-Check:
-- Protocol (use LL/LL128 for small)
-- CPU frequency scaling (disable)
-- Proxy thread priority
-- Polling frequency
-
-### Hangs/Crashes
-
-Check:
-- MR cache invalidation (memhooks enabled?)
-- Resource limits (queue sizes)
-- IOMMU configuration (dmesg)
-- Version compatibility
-
 ## Benchmarking
 
 ### NCCL Tests
