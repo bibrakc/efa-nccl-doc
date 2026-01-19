@@ -4,7 +4,7 @@
 
 **rdma-core** is the userspace component of the Linux RDMA stack, providing libraries and infrastructure for RDMA/InfiniBand communication. For EFA, rdma-core bridges the gap between libfabric and the kernel driver.
 
-**Location**: `/home/mick/work/rdma-core/`
+**GitHub**: [rdma-core](https://github.com/linux-rdma/rdma-core/tree/6e9643e)
 
 ## Architecture Position
 
@@ -33,7 +33,7 @@
 
 **Purpose**: Provides hardware-agnostic RDMA API (verbs)
 
-**Header**: `/home/mick/work/rdma-core/libibverbs/verbs.h`
+**Header**: [libibverbs/verbs.h](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h)
 
 **Core Data Structures**:
 
@@ -83,7 +83,7 @@ struct ibv_cq {  // ([libibverbs/verbs.h:1540-1550](https://github.com/linux-rdm
 
 ### 2. EFA Provider (rdma-core)
 
-**Location**: `/home/mick/work/rdma-core/providers/efa/`
+**GitHub**: [providers/efa/](https://github.com/linux-rdma/rdma-core/tree/6e9643e/providers/efa)
 
 **Key Files**:
 - `verbs.c` - EFA-specific verb implementations (75KB, primary implementation)

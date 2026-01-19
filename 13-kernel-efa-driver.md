@@ -4,7 +4,7 @@
 
 The **EFA kernel driver** is a Linux kernel module that provides the interface between userspace RDMA applications and the EFA hardware. It implements the kernel-side of the RDMA verbs API and manages hardware resources.
 
-**Location**: `/home/mick/work/amzn-drivers/kernel/linux/efa/`
+**GitHub**: [kernel/linux/efa/](https://github.com/amzn/amzn-drivers/tree/8a8b6f2/kernel/linux/efa)
 
 **Driver Version**: 3.0.0 (as of this documentation)
 
