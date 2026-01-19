@@ -72,6 +72,8 @@ fi_getinfo(FI_VERSION(1, 14), NULL, NULL, 0, &hints, &info);
 fi_fabric(info->fabric_attr, &fabric, NULL);
 ```
 
+(`struct fi_info` ([fabric.h:198-232](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L198-L232)))
+
 **Responsibilities:**
 - Provider selection
 - Fabric-wide resources
@@ -86,6 +88,8 @@ struct fid_domain *domain;
 
 fi_domain(fabric, info, &domain, NULL);
 ```
+
+(`struct fid_domain` ([fi_domain.h:94-104](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L94-L104)))
 
 **Responsibilities:**
 - Memory registration scope
@@ -111,7 +115,7 @@ struct fi_domain_attr {
 
 ### Endpoint
 
-Communication endpoint for data transfer:
+Communication endpoint for data transfer (`struct fid_ep` ([fabric.h:168-178](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L168-L178))):
 
 ```c
 struct fid_ep *ep;
@@ -126,6 +130,8 @@ fi_ep_bind(ep, &av->fid, 0);
 fi_enable(ep);
 ```
 
+(`fi_endpoint()` ([fi_endpoint.h:182](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_endpoint.h#L182)), `fi_ep_bind()` ([fi_endpoint.h:203](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_endpoint.h#L203)), `fi_enable()` ([fi_endpoint.h:211](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_endpoint.h#L211)))
+
 **Endpoint Types:**
 1. **FI_EP_MSG**: Connected, message-oriented (like TCP)
 2. **FI_EP_RDM**: Reliable datagram (like UD with reliability)
@@ -135,7 +141,7 @@ fi_enable(ep);
 
 ### Completion Queue (CQ)
 
-Reports completion of asynchronous operations:
+Reports completion of asynchronous operations (`struct fid_cq` ([fi_eq.h:138-148](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L138-L148))):
 
 ```c
 struct fid_cq *cq;
@@ -147,6 +153,8 @@ struct fi_cq_attr cq_attr = {
 
 fi_cq_open(domain, &cq_attr, &cq, NULL);
 ```
+
+(`fi_cq_open()` ([fi_eq.h:363](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L363)))
 
 **CQ Formats:**
 - **FI_CQ_FORMAT_CONTEXT**: Just context pointer
@@ -167,9 +175,11 @@ for (int i = 0; i < ret; i++) {
 }
 ```
 
+(`struct fi_cq_data_entry` ([fi_eq.h:215-220](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L215-L220)), `fi_cq_read()` ([fi_eq.h:311](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L311)))
+
 ### Address Vector (AV)
 
-Maps addresses for connection-less endpoints:
+Maps addresses for connection-less endpoints (`struct fid_av` ([fi_cm.h:167-177](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_cm.h#L167-L177))):
 
 ```c
 struct fid_av *av;
@@ -185,6 +195,8 @@ fi_addr_t remote_addr;
 fi_av_insert(av, &peer_addr, 1, &remote_addr, 0, NULL);
 ```
 
+(`fi_av_insert()` ([fi_cm.h:206](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_cm.h#L206)))
+
 **AV Types:**
 - **FI_AV_MAP**: Hash table lookup
 - **FI_AV_TABLE**: Direct indexing (faster)
@@ -196,7 +208,7 @@ fi_av_insert(av, &peer_addr, 1, &remote_addr, 0, NULL);
 
 ### Memory Region (MR)
 
-Registered memory for RDMA:
+Registered memory for RDMA (`struct fid_mr` ([fi_domain.h:131-138](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L131-L138))):
 
 ```c
 struct fid_mr *mr;
@@ -211,6 +223,8 @@ void *desc = fi_mr_desc(mr);
 // Get key for remote access
 uint64_t rkey = fi_mr_key(mr);
 ```
+
+(`fi_mr_reg()` ([fi_domain.h:413](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413)), `fi_mr_desc()` ([fi_domain.h:147](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L147)))
 
 **Access Flags:**
 - **FI_SEND**: Can be source for send
@@ -260,6 +274,8 @@ ssize_t fi_inject(struct fid_ep *ep,
                   fi_addr_t dest_addr);
 ```
 
+(`fi_send()` ([fi_msg.h:104](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L104)), `fi_inject()` ([fi_msg.h:133](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L133)))
+
 **Characteristics:**
 - **fi_send**: Asynchronous, requires completion
 - **fi_inject**: Synchronous, no completion, limited size (< 4 KB)
@@ -275,6 +291,8 @@ ssize_t fi_recv(struct fid_ep *ep,
                 fi_addr_t src_addr,
                 void *context);
 ```
+
+(`fi_recv()` ([fi_msg.h:67](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L67)))
 
 **Pre-posting:**
 - Must be posted before data arrives (for RDM)
@@ -306,6 +324,8 @@ ssize_t fi_trecv(struct fid_ep *ep,
                  void *context);
 ```
 
+(`fi_tsend()` ([fi_tagged.h:121](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L121)), `fi_trecv()` ([fi_tagged.h:98](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L98)))
+
 **Tag Matching:**
 ```c
 // Receive matches if: (recv_tag & ~ignore) == (send_tag & ~ignore)
@@ -336,6 +356,8 @@ ssize_t fi_read(struct fid_ep *ep,
                 void *context);
 ```
 
+(`fi_read()` ([fi_rma.h:82](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_rma.h#L82)))
+
 **Flow:**
 ```
 Local                           Remote
@@ -359,6 +381,8 @@ ssize_t fi_write(struct fid_ep *ep,
                  uint64_t remote_key,
                  void *context);
 ```
+
+(`fi_write()` ([fi_rma.h:111](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_rma.h#L111)))
 
 **Flow:**
 ```
@@ -508,6 +532,8 @@ if (ret > 0) {
                         err_entry.err_data, NULL, 0));
 }
 ```
+
+(`struct fi_cq_err_entry` ([fi_eq.h:233-246](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L233-L246)), `fi_cq_readerr()` ([fi_eq.h:348](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L348)))
 
 **Common Errors:**
 - **FI_EAGAIN**: Resource busy, retry
