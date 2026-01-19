@@ -1,0 +1,71 @@
+# GitHub Permalink Mappings for NCCL/EFA Documentation
+# Format: name|repo|file_path|line_range
+# This file maps struct and function names to their source code locations
+
+# === AWS-OFI-NCCL Structs ===
+nccl_ofi_freelist_elem_t|aws-ofi-nccl|include/nccl_ofi_freelist.h|19-23
+nccl_ofi_freelist_block_t|aws-ofi-nccl|include/nccl_ofi_freelist.h|28-35
+nccl_ofi_freelist_t|aws-ofi-nccl|include/nccl_ofi_freelist.h|88-109
+nccl_ofi_reg_entry_t|aws-ofi-nccl|include/nccl_ofi_mr.h|186-192
+nccl_ofi_mr_cache_t|aws-ofi-nccl|include/nccl_ofi_mr.h|197-205
+nccl_ofi_mr_ckey|aws-ofi-nccl|include/nccl_ofi_mr.h|35-44
+nccl_ofi_mr_ckey_t|aws-ofi-nccl|include/nccl_ofi_mr.h|35-46
+
+# === AWS-OFI-NCCL Functions ===
+nccl_ofi_freelist_init|aws-ofi-nccl|src/nccl_ofi_freelist.cpp|131
+nccl_ofi_freelist_init_mr|aws-ofi-nccl|src/nccl_ofi_freelist.cpp|188
+nccl_ofi_freelist_entry_alloc|aws-ofi-nccl|src/nccl_ofi_freelist.cpp|270
+nccl_ofi_freelist_entry_free|aws-ofi-nccl|src/nccl_ofi_freelist.cpp|318
+nccl_ofi_mr_cache_init|aws-ofi-nccl|src/nccl_ofi_mr.cpp|13
+nccl_ofi_mr_cache_lookup_entry|aws-ofi-nccl|src/nccl_ofi_mr.cpp|112
+nccl_ofi_mr_cache_insert_entry|aws-ofi-nccl|src/nccl_ofi_mr.cpp|153
+nccl_ofi_mr_cache_del_entry|aws-ofi-nccl|src/nccl_ofi_mr.cpp|223
+
+# === Libfabric Structs ===
+fid_mr|libfabric|include/rdma/fi_domain.h|131-138
+fi_cq_data_entry|libfabric|include/rdma/fi_eq.h|215-220
+fi_cq_err_entry|libfabric|include/rdma/fi_eq.h|233-246
+fi_info|libfabric|include/rdma/fabric.h|198-232
+fid_ep|libfabric|include/rdma/fabric.h|168-178
+fid_domain|libfabric|include/rdma/fi_domain.h|94-104
+fid_cq|libfabric|include/rdma/fi_eq.h|138-148
+fid_av|libfabric|include/rdma/fi_cm.h|167-177
+
+# === Libfabric Functions ===
+fi_tsend|libfabric|include/rdma/fi_tagged.h|121
+fi_trecv|libfabric|include/rdma/fi_tagged.h|98
+fi_getinfo|libfabric|include/rdma/fabric.h|315
+fi_endpoint|libfabric|include/rdma/fi_endpoint.h|182
+fi_ep_bind|libfabric|include/rdma/fi_endpoint.h|203
+fi_enable|libfabric|include/rdma/fi_endpoint.h|211
+fi_mr_reg|libfabric|include/rdma/fi_domain.h|413
+fi_mr_regattr|libfabric|include/rdma/fi_domain.h|432
+fi_mr_desc|libfabric|include/rdma/fi_domain.h|147
+fi_cq_read|libfabric|include/rdma/fi_eq.h|311
+fi_cq_readerr|libfabric|include/rdma/fi_eq.h|348
+fi_av_insert|libfabric|include/rdma/fi_cm.h|206
+fi_getname|libfabric|include/rdma/fi_cm.h|154
+fi_send|libfabric|include/rdma/fi_msg.h|104
+fi_recv|libfabric|include/rdma/fi_msg.h|67
+fi_read|libfabric|include/rdma/fi_rma.h|82
+fi_write|libfabric|include/rdma/fi_rma.h|111
+fi_inject|libfabric|include/rdma/fi_msg.h|133
+fi_fabric|libfabric|include/rdma/fabric.h|334
+fi_domain|libfabric|include/rdma/fi_domain.h|409
+fi_cq_open|libfabric|include/rdma/fi_eq.h|363
+fi_av_open|libfabric|include/rdma/fi_cm.h|218
+fi_close|libfabric|include/rdma/fabric.h|150
+
+# === Commit SHAs ===
+# aws-ofi-nccl: 75240c8
+# libfabric: 6b9e629
+# amzn-drivers: 8a8b6f2
+# rdma-core: 6e9643e
+# linux: e84d960
+
+# === GitHub Base URLs ===
+# aws-ofi-nccl: https://github.com/sirmick/aws-ofi-nccl/blob/75240c8
+# libfabric: https://github.com/ofiwg/libfabric/blob/6b9e629
+# amzn-drivers: https://github.com/amzn/amzn-drivers/blob/8a8b6f2
+# rdma-core: https://github.com/linux-rdma/rdma-core/blob/6e9643e
+# linux: https://github.com/torvalds/linux/blob/e84d960

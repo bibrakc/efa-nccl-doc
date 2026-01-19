@@ -44,7 +44,7 @@ The plugin implements all functions in the `ncclNet_t` interface:
 ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 {
   // Initialize libfabric
-  fi_getinfo(..., &ofi_info);
+  fi_getinfo(..., &ofi_info);  // See fi_getinfo() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L315)
 
   // Discover available devices (EFA adapters)
   // Setup domain, fabric, etc.
@@ -98,16 +98,16 @@ ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
                                  void** listenComm)
 {
   // Create endpoint
-  fi_endpoint(domain, info, &ep, NULL);
+  fi_endpoint(domain, info, &ep, NULL);  // See fi_endpoint() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_endpoint.h#L182)
 
   // Bind to completion queue
-  fi_ep_bind(ep, cq, 0);
+  fi_ep_bind(ep, cq, 0);  // See fi_ep_bind() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_endpoint.h#L203)
 
   // Enable endpoint
-  fi_enable(ep);
+  fi_enable(ep);  // See fi_enable() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_endpoint.h#L211)
 
   // Get local address
-  fi_getname(ep, &local_addr, &addrlen);
+  fi_getname(ep, &local_addr, &addrlen);  // See fi_getname() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_cm.h#L154)
 
   // Return address in handle (for sharing)
   memcpy(handle, &local_addr, addrlen);
@@ -124,7 +124,7 @@ ncclResult_t nccl_net_ofi_connect(int dev, void* handle,
                                   void** sendComm)
 {
   // Create endpoint
-  fi_endpoint(domain, info, &ep, NULL);
+  fi_endpoint(domain, info, &ep, NULL);  // See fi_endpoint() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_endpoint.h#L182)
 
   // Bind to CQ
   fi_ep_bind(ep, cq, 0);
@@ -134,7 +134,7 @@ ncclResult_t nccl_net_ofi_connect(int dev, void* handle,
   memcpy(&remote_addr, handle, addrlen);
 
   // Store for future sends
-  comm->remote_addr = fi_av_insert(av, &remote_addr, 1, ...);
+  comm->remote_addr = fi_av_insert(av, &remote_addr, 1, ...);  // See fi_av_insert() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_cm.h#L206)
 
   *sendComm = comm_state;
   return ncclSuccess;
@@ -174,7 +174,7 @@ ncclResult_t nccl_net_ofi_regMr(void* comm, void* data,
 
   if (type == NCCL_PTR_CUDA) {
     // GPU memory
-    ret = fi_mr_reg(domain, data, size, access,
+    ret = fi_mr_reg(domain, data, size, access,  // See fi_mr_reg() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413)
                     0, 0, FI_HMEM_CUDA, &mr, NULL);
   } else {
     // Host memory
@@ -201,6 +201,8 @@ struct mr_cache {
 };
 ```
 
+(See `struct fid_mr` ([include/rdma/fi_domain.h:131-138](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L131-L138)))
+
 **Cache Benefits:**
 - Avoid expensive re-registration
 - Critical for performance (100+ μs saved)
@@ -213,21 +215,21 @@ ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data,
                                 int size, int tag,
                                 void* mhandle, void** request)
 {
-  struct nccl_ofi_send_comm* comm = sendComm;
+  struct nccl_ofi_send_comm* comm = sendComm;  // See struct nccl_net_ofi_send_comm (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L869-L901)
   struct fid_mr* mr = mhandle;
 
   // Allocate request tracking
-  struct nccl_ofi_req* req = get_request();
+  struct nccl_ofi_req* req = get_request();  // See struct nccl_net_ofi_req (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L132-L134)
   req->comm = comm;
   req->size = size;
   req->state = REQ_PENDING;
 
   // Get memory descriptor
-  void* desc = fi_mr_desc(mr);
+  void* desc = fi_mr_desc(mr);  // See fi_mr_desc() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L147)
 
   // Post send operation
   // Use fi_tsend for tagged messaging (tag identifies channel/operation)
-  ret = fi_tsend(comm->ep, data, size, desc,
+  ret = fi_tsend(comm->ep, data, size, desc,  // See fi_tsend() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L121)
                  comm->remote_addr, tag, req);
 
   if (ret == -FI_EAGAIN) {
@@ -253,7 +255,7 @@ ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n,
                                 int* tags, void** mhandles,
                                 void** request)
 {
-  struct nccl_ofi_recv_comm* comm = recvComm;
+  struct nccl_ofi_recv_comm* comm = recvComm;  // See struct nccl_net_ofi_recv_comm (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L903-L935)
 
   // NCCL can post multiple receives at once (up to n)
   struct nccl_ofi_req* req = get_request();
@@ -264,7 +266,7 @@ ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n,
     void* desc = fi_mr_desc(mr);
 
     // Pre-post receives
-    ret = fi_trecv(comm->ep, data[i], sizes[i], desc,
+    ret = fi_trecv(comm->ep, data[i], sizes[i], desc,  // See fi_trecv() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L98)
                    FI_ADDR_UNSPEC, tags[i], 0, req);
 
     if (ret < 0) {
@@ -320,8 +322,8 @@ ncclResult_t nccl_net_ofi_test(void* request, int* done,
   struct nccl_ofi_req* req = request;
 
   // Poll completion queue
-  struct fi_cq_data_entry cq_entry;
-  ret = fi_cq_read(comm->cq, &cq_entry, 1);
+  struct fi_cq_data_entry cq_entry;  // See struct fi_cq_data_entry (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L215-L220)
+  ret = fi_cq_read(comm->cq, &cq_entry, 1);  // See fi_cq_read() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L311)
 
   if (ret > 0) {
     // Match completion to request
@@ -340,8 +342,8 @@ ncclResult_t nccl_net_ofi_test(void* request, int* done,
   }
 
   // Check for errors
-  struct fi_cq_err_entry err_entry;
-  if (fi_cq_readerr(comm->cq, &err_entry, 0) > 0) {
+  struct fi_cq_err_entry err_entry;  // See struct fi_cq_err_entry (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L233-L246)
+  if (fi_cq_readerr(comm->cq, &err_entry, 0) > 0) {  // See fi_cq_readerr() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L348)
     // Handle error
     return ncclSystemError;
   }
@@ -366,7 +368,7 @@ ncclResult_t nccl_net_ofi_deregMr(void* comm, void* mhandle)
   // Decrement refcount in cache
   if (decref_cache(mr) == 0) {
     // Last reference, actually deregister
-    fi_close(&mr->fid);
+    fi_close(&mr->fid);  // See fi_close() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L150)
     remove_from_cache(mr);
   }
 
@@ -459,10 +461,10 @@ For small messages, the plugin can use eager send:
 ```c
 if (size < EAGER_THRESHOLD) {
   // Send immediately, no pre-posted recv needed
-  fi_inject(ep, data, size, remote_addr);
+  fi_inject(ep, data, size, remote_addr);  // See fi_inject() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L133)
 } else {
   // Standard fi_send
-  fi_send(ep, data, size, desc, remote_addr, context);
+  fi_send(ep, data, size, desc, remote_addr, context);  // See fi_send() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L104)
 }
 ```
 
@@ -478,35 +480,37 @@ if (size < EAGER_THRESHOLD) {
 
 ```c
 // Initialization
-fi_getinfo()      // Query providers
-fi_fabric()       // Create fabric
-fi_domain()       // Create domain
-fi_endpoint()     // Create endpoint
-fi_cq_open()      // Create completion queue
-fi_av_open()      // Create address vector
+fi_getinfo()      // Query providers (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L315)
+fi_fabric()       // Create fabric (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L334)
+fi_domain()       // Create domain (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L409)
+fi_endpoint()     // Create endpoint (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_endpoint.h#L182)
+fi_cq_open()      // Create completion queue (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L363)
+fi_av_open()      // Create address vector (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_cm.h#L218)
 
 // Memory
-fi_mr_reg()       // Register memory
-fi_mr_desc()      // Get descriptor
+fi_mr_reg()       // Register memory (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413)
+fi_mr_desc()      // Get descriptor (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L147)
 
 // Data transfer
-fi_send()         // Send message
-fi_tsend()        // Tagged send
-fi_recv()         // Receive message
-fi_trecv()        // Tagged receive
-fi_read()         // RDMA read
-fi_write()        // RDMA write
-fi_inject()       // Eager send
+fi_send()         // Send message (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L104)
+fi_tsend()        // Tagged send (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L121)
+fi_recv()         // Receive message (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L67)
+fi_trecv()        // Tagged receive (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L98)
+fi_read()         // RDMA read (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_rma.h#L82)
+fi_write()        // RDMA write (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_rma.h#L111)
+fi_inject()       // Eager send (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L133)
 
 // Completion
-fi_cq_read()      // Poll completions
-fi_cq_readerr()   // Read error
+fi_cq_read()      // Poll completions (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L311)
+fi_cq_readerr()   // Read error (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L348)
 
 // Cleanup
-fi_close()        // Close resources
+fi_close()        // Close resources (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L150)
 ```
 
 ### Endpoint Configuration
+
+(See `struct fi_info` ([include/rdma/fabric.h:198-232](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L198-L232)))
 
 ```c
 struct fi_info hints = {

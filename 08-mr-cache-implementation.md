@@ -13,7 +13,7 @@ The OFI NCCL plugin implements a **custom memory registration (MR) cache** to av
 **Performance Impact**:
 ```
 Without cache (every operation registers memory):
-  fi_mr_reg()    → 100-500 μs
+  fi_mr_reg()    → 100-500 μs  // ([include/rdma/fi_domain.h:413](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413))
   fi_send()      → 10-20 μs
   fi_mr_dereg()  → 50-200 μs
   Total: 160-720 μs per operation
@@ -44,7 +44,7 @@ With cache (first operation registers, rest hit cache):
  * A memory registration cache entry
  * Stores one registered memory region with reference counting
  */
-typedef struct nccl_ofi_reg_entry {
+typedef struct nccl_ofi_reg_entry ([include/nccl_ofi_mr.h:186-192](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi_mr.h#L186-L192)) {
     uintptr_t addr;         // Page-aligned base address
     size_t pages;           // Number of pages covered
     int refcnt;             // Reference count (how many users)
@@ -66,7 +66,7 @@ typedef struct nccl_ofi_reg_entry {
  * Device-specific memory registration cache
  * Implemented as a sorted array (by address) for fast lookup
  */
-typedef struct nccl_ofi_mr_cache {
+typedef struct nccl_ofi_mr_cache ([include/nccl_ofi_mr.h:197-205](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi_mr.h#L197-L205)) {
     nccl_ofi_reg_entry_t **slots;  // Sorted array of entries
     size_t system_page_size;       // Page size (typically 4096)
     size_t size;                   // Total capacity (grows 2x on demand)
@@ -116,7 +116,8 @@ struct nccl_ofi_mr_ckey {
 
 ```cpp
 // From nccl_ofi_mr.cpp:13
-nccl_ofi_mr_cache_t *nccl_ofi_mr_cache_init(size_t init_num_entries,
+nccl_ofi_mr_cache_t *nccl_ofi_mr_cache_init( // ([src/nccl_ofi_mr.cpp:13](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_mr.cpp#L13))
+                                             size_t init_num_entries,
                                              size_t mr_cache_page_size)
 {
     nccl_ofi_mr_cache_t *cache = calloc(1, sizeof(*cache));
@@ -137,7 +138,8 @@ nccl_ofi_mr_cache_t *nccl_ofi_mr_cache_init(size_t init_num_entries,
 
 ```cpp
 // From nccl_ofi_mr.cpp:112
-void *nccl_ofi_mr_cache_lookup_entry(nccl_ofi_mr_cache_t *cache,
+void *nccl_ofi_mr_cache_lookup_entry( // ([src/nccl_ofi_mr.cpp:112](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_mr.cpp#L112))
+                                      nccl_ofi_mr_cache_t *cache,
                                       nccl_ofi_mr_ckey_ref ckey,
                                       bool is_endpoint_mr)
 {
@@ -186,7 +188,8 @@ void *nccl_ofi_mr_cache_lookup_entry(nccl_ofi_mr_cache_t *cache,
 
 ```cpp
 // From nccl_ofi_mr.cpp:153
-int nccl_ofi_mr_cache_insert_entry(nccl_ofi_mr_cache_t *cache,
+int nccl_ofi_mr_cache_insert_entry( // ([src/nccl_ofi_mr.cpp:153](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_mr.cpp#L153))
+                                    nccl_ofi_mr_cache_t *cache,
                                     nccl_ofi_mr_ckey_ref ckey,
                                     bool is_endpoint_mr,
                                     void *handle)

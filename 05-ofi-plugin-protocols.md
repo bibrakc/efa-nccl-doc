@@ -41,7 +41,7 @@ NCCL Initiates Connection:
 ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
                                  void** listenComm)
 {
-  struct nccl_ofi_listen_comm* comm = calloc(1, sizeof(*comm));
+  struct nccl_ofi_listen_comm* comm = calloc(1, sizeof(*comm));  // See struct nccl_net_ofi_listen_comm (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L861-L867)
 
   // 1. Create libfabric endpoint
   struct fi_info* info = get_efa_info(dev);
@@ -52,7 +52,7 @@ ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
     .size = 1024,
     .format = FI_CQ_FORMAT_DATA,
   };
-  ret = fi_cq_open(domain, &cq_attr, &comm->cq, NULL);
+  ret = fi_cq_open(domain, &cq_attr, &comm->cq, NULL);  // See fi_cq_open() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L363)
 
   // 3. Bind endpoint to resources
   fi_ep_bind(comm->ep, &comm->cq->fid, FI_TRANSMIT | FI_RECV);
@@ -98,7 +98,7 @@ ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
 ncclResult_t nccl_net_ofi_connect(int dev, void* handle,
                                   void** sendComm)
 {
-  struct nccl_ofi_send_comm* comm = calloc(1, sizeof(*comm));
+  struct nccl_ofi_send_comm* comm = calloc(1, sizeof(*comm));  // See struct nccl_net_ofi_send_comm (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L869-L901)
 
   // 1. Deserialize peer's address from handle
   struct nccl_ofi_handle* h = (struct nccl_ofi_handle*)handle;
@@ -155,7 +155,7 @@ ncclResult_t nccl_net_ofi_accept(void* listenComm,
   // No actual connection to "accept" in libfabric
   // Just transition state
 
-  struct nccl_ofi_recv_comm* comm = calloc(1, sizeof(*comm));
+  struct nccl_ofi_recv_comm* comm = calloc(1, sizeof(*comm));  // See struct nccl_net_ofi_recv_comm (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L903-L935)
 
   // Copy endpoint and resources from listen comm
   comm->ep = lcomm->ep;
@@ -244,6 +244,9 @@ RDM "connection":   Knowing someone's phone number (can call anytime)
 The OFI plugin uses **tagged messages** to multiplex multiple NCCL channels over the same endpoint.
 
 **Tag Structure** (plugin-specific, example):
+
+(Note: The actual tag structure may vary by protocol implementation in aws-ofi-nccl)
+
 ```c
 // Tag encoding (64-bit)
 struct nccl_ofi_tag {
@@ -273,11 +276,11 @@ ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data,
                                 int size, int tag,
                                 void* mhandle, void** request)
 {
-  struct nccl_ofi_send_comm* comm = sendComm;
-  struct fid_mr* mr = mhandle;
+  struct nccl_ofi_send_comm* comm = sendComm;  // See struct nccl_net_ofi_send_comm (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L869-L901)
+  struct fid_mr* mr = mhandle;  // See struct fid_mr (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L131-L138)
 
   // === 1. Allocate Request ===
-  struct nccl_ofi_req* req = alloc_request(comm);
+  struct nccl_ofi_req* req = alloc_request(comm);  // See struct nccl_net_ofi_req (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L132-L134)
   req->comm = comm;
   req->size = size;
   req->state = REQ_PENDING;
@@ -285,14 +288,14 @@ ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data,
 
   // === 2. Get Memory Descriptor ===
   // Descriptor contains lkey for local access
-  void* desc = fi_mr_desc(mr);
+  void* desc = fi_mr_desc(mr);  // See fi_mr_desc() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L147)
 
   // === 3. Prepare Tagged Send ===
   // Tag identifies which NCCL operation/channel this is
   uint64_t fi_tag = (uint64_t)tag;
 
   // === 4. Post Send to Libfabric ===
-  ssize_t ret = fi_tsend(
+  ssize_t ret = fi_tsend(  // See fi_tsend() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L121)
       comm->ep,               // Endpoint
       data,                   // Buffer to send
       size,                   // Size
@@ -395,7 +398,7 @@ ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n,
                                 int* tags, void** mhandles,
                                 void** request)
 {
-  struct nccl_ofi_recv_comm* comm = recvComm;
+  struct nccl_ofi_recv_comm* comm = recvComm;  // See struct nccl_net_ofi_recv_comm (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L903-L935)
 
   // === 1. Allocate Request for All Receives ===
   struct nccl_ofi_req* req = alloc_request(comm);
@@ -411,7 +414,7 @@ ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n,
     uint64_t fi_tag = (uint64_t)tags[i];
 
     // === 3. Pre-Post Tagged Receive ===
-    ssize_t ret = fi_trecv(
+    ssize_t ret = fi_trecv(  // See fi_trecv() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L98)
         comm->ep,               // Endpoint
         data[i],                // Receive buffer
         sizes[i],               // Size
@@ -536,8 +539,8 @@ ncclResult_t nccl_net_ofi_test(void* request, int* done, int* size)
   *done = 0;
 
   // === 1. Poll Completion Queue ===
-  struct fi_cq_data_entry entries[CQ_POLL_BATCH];
-  int nread = fi_cq_read(comm->cq, entries, CQ_POLL_BATCH);
+  struct fi_cq_data_entry entries[CQ_POLL_BATCH];  // See struct fi_cq_data_entry (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L215-L220)
+  int nread = fi_cq_read(comm->cq, entries, CQ_POLL_BATCH);  // See fi_cq_read() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L311)
 
   if (nread > 0) {
     // === 2. Process Completions ===
@@ -579,8 +582,8 @@ ncclResult_t nccl_net_ofi_test(void* request, int* done, int* size)
   }
   else {
     // Error
-    struct fi_cq_err_entry err;
-    fi_cq_readerr(comm->cq, &err, 0);
+    struct fi_cq_err_entry err;  // See struct fi_cq_err_entry (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L233-L246)
+    fi_cq_readerr(comm->cq, &err, 0);  // See fi_cq_readerr() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L348)
 
     // Handle error
     return ncclSystemError;
@@ -659,7 +662,7 @@ Receiver                               Sender
                                           fi_cq_read() → CTS msg
 
                                        8. RDMA Write
-                                          fi_write(data,
+                                          fi_write(data,  // See fi_write() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_rma.h#L111)
                                                    remote_addr,
                                                    remote_key)
                                           ─────────────────────→
