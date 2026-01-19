@@ -15,17 +15,22 @@ This documentation provides in-depth coverage of the complete stack used for GPU
 - **[nccl-collectives.md](nccl-collectives.md)** - Collective operations, algorithms (Ring/Tree), protocols (Simple/LL/LL128)
 - **[nccl-datapath.md](nccl-datapath.md)** - Complete data path from GPU through network
 
+### EFA Hardware and Protocol
+
+- **[efa-hardware-architecture.md](efa-hardware-architecture.md)** - EFA queue pairs, completion queues, work queue entries, memory layout, hardware capabilities
+- **[srd-protocol.md](srd-protocol.md)** - Scalable Reliable Datagram protocol: multipath routing, congestion control, reliability mechanisms
+- **[kernel-efa-driver.md](kernel-efa-driver.md)** - Linux kernel EFA driver internals
+
 ### Transport Layer
 
 - **[ofi-plugin.md](ofi-plugin.md)** - OFI NCCL plugin architecture and implementation
 - **[libfabric-overview.md](libfabric-overview.md)** - Libfabric API, capabilities, data transfer operations
-- **[efa-provider.md](efa-provider.md)** - EFA provider specifics, SRD protocol, eager/rendezvous protocols
+- **[efa-provider.md](efa-provider.md)** - EFA provider specifics, eager/rendezvous protocols
 
 ### System Level
 
 - **[threading-model.md](threading-model.md)** - Threading across the stack, proxy threads, concurrency
 - **[rdma-memreg.md](rdma-memreg.md)** - RDMA operations, memory registration, caching strategies
-- **[efa-driver.md](efa-driver.md)** - EFA kernel driver architecture, queue management, zero-copy data path
 
 ### Performance
 
@@ -40,7 +45,6 @@ This documentation provides in-depth coverage of the complete stack used for GPU
 - **[freelist-allocator.md](freelist-allocator.md)** - Freelist allocator for high-performance object pooling (estimated 20-100x faster than malloc)
 - **[mr-cache-implementation.md](mr-cache-implementation.md)** - Memory registration cache implementation details (approximately 25x speedup)
 - **[rdma-core-and-verbs.md](rdma-core-and-verbs.md)** - rdma-core library and libibverbs API
-- **[kernel-efa-driver.md](kernel-efa-driver.md)** - Linux kernel EFA driver internals
 
 ### GPU and Accelerator Memory
 
@@ -229,11 +233,16 @@ This documentation is focused on understanding the existing implementation for o
 
 ## Changelog
 
+### 2026-01-19
+- Added comprehensive **[efa-hardware-architecture.md](efa-hardware-architecture.md)** documenting EFA queue pairs, completion queues, work queue entries, memory layout, and programming model
+- Added **[srd-protocol.md](srd-protocol.md)** documenting AWS's Scalable Reliable Datagram protocol with multipath routing (64 paths), hardware-based congestion control, and reliability mechanisms
+- Updated all numerical performance claims to be properly qualified as estimates or approximations
+- Removed file numbering from all documentation files to ease maintenance
+
 ### 2026-01-17
 - Initial comprehensive documentation
 - Covered full stack: NCCL → EFA hardware
 - Included optimization guide
-- Added troubleshooting section
 
 ---
 
