@@ -13,6 +13,7 @@ This documentation provides in-depth coverage of the complete stack used for GPU
 - **[overview.md](overview.md)** - Architecture overview and component interactions
 - **[nccl-core.md](nccl-core.md)** - NCCL fundamentals, topology, communicators, channels
 - **[nccl-collectives.md](nccl-collectives.md)** - Collective operations, algorithms (Ring/Tree), protocols (Simple/LL/LL128)
+- **[nccl-tuner.md](nccl-tuner.md)** - Cost-based algorithm/protocol selection, AWS region-based tuner, channel count tuning
 - **[nccl-datapath.md](nccl-datapath.md)** - Complete data path from GPU through network
 
 ### EFA Hardware and Protocol
@@ -210,8 +211,10 @@ This documentation is focused on understanding the existing implementation for o
 ### 2026-01-19
 - Added comprehensive **[efa-hardware-architecture.md](efa-hardware-architecture.md)** documenting EFA queue pairs, completion queues, work queue entries, memory layout, and programming model
 - Added **[srd-protocol.md](srd-protocol.md)** documenting AWS's Scalable Reliable Datagram protocol with multipath routing (64 paths), hardware-based congestion control, and reliability mechanisms
+- Added **[nccl-tuner.md](nccl-tuner.md)** documenting NCCL's cost-based tuner, algorithm/protocol selection, channel count tuning, and AWS OFI region-based tuner with geometric selection
 - Updated all numerical performance claims to be properly qualified as estimates or approximations
 - Removed file numbering from all documentation files to ease maintenance
+- Removed Troubleshooting section from README
 
 ### 2026-01-17
 - Initial comprehensive documentation
