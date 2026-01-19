@@ -6,6 +6,36 @@ The OFI (OpenFabrics Interfaces) NCCL plugin (`aws-ofi-nccl`) provides a network
 
 **Repository**: https://github.com/aws/aws-ofi-nccl
 
+## AWS Instance Types and Protocol Support
+
+The OFI plugin supports different communication protocols based on instance capabilities:
+
+### P4 Series (A100 GPUs)
+
+| Instance | GPUs | EFA Config | Total BW | Protocol | Notes |
+|----------|------|------------|----------|----------|-------|
+| p4d.24xlarge | 8×A100 | 4×100G | 400 Gbps | **Send/Recv only** | No native RDMA write |
+| p4de.24xlarge | 8×A100 | 4×100G | 400 Gbps | **Send/Recv only** | No native RDMA write |
+
+### P5 Series (H100/H200 GPUs)
+
+| Instance | GPUs | EFA Config | Total BW | Per-GPU BW | Protocol | Latency | Notes |
+|----------|------|------------|----------|------------|----------|---------|-------|
+| p5.48xlarge | 8×H100 | 32 EFAs | 3200 Gbps | 400 Gbps | **RDMA + Send/Recv** | 75 μs | EFAv2 |
+| p5e.48xlarge | 8×H100 | 32 EFAs | 3200 Gbps | 400 Gbps | **RDMA + Send/Recv** | 75 μs | EFAv2 |
+| p5en.48xlarge | 8×H200 | 32 EFAs | 3200 Gbps | 400 Gbps | **RDMA + Send/Recv** | 35 μs | **EFAv3**, 35% lower latency |
+
+**Key Differences:**
+- **p4d/p4de**: Use send/recv protocol only (tagged messaging). RDMA write is emulated, not native.
+- **p5/p5e/p5en**: Support native RDMA write for improved performance. Plugin defaults to RDMA protocol.
+- **Multi-rail**: Each GPU can use 4 EFA adapters (p4d: 4×100G, p5+: sharing 32 total EFAs across 8 GPUs)
+
+**Protocol Selection** ([src/platform-aws.cpp](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/platform-aws.cpp#L81-L259)):
+```cpp
+// P4d/P4de: default_protocol = PROTOCOL::SENDRECV
+// P5/P5e/P5en: default_protocol = PROTOCOL::RDMA
+```
+
 ## Architecture
 
 ```
@@ -396,24 +426,58 @@ ncclResult_t nccl_net_ofi_close(void* comm)
 
 EFA instances can have multiple NICs. The plugin supports using all available NICs:
 
-```
-GPU 0 ──┬─→ EFA 0 ─→ Network
-        └─→ EFA 1 ─→ Network
+#### p4d/p4de Configuration (4×100G EFAs per instance)
 
-GPU 1 ──┬─→ EFA 0 ─→ Network
-        └─→ EFA 1 ─→ Network
+Each GPU uses all 4 EFAs, distributed across the instance:
+
 ```
+Instance: 8 GPUs, 4 EFAs (100 Gbps each)
+GPU 0 ──┬─→ EFA 0 (100G) ─→ Network
+        ├─→ EFA 1 (100G) ─→ Network
+        ├─→ EFA 2 (100G) ─→ Network
+        └─→ EFA 3 (100G) ─→ Network
+                          = 400 Gbps total / 8 GPUs = 50 GB/s per GPU
+
+GPU 1-7: Same 4 EFAs shared across all GPUs
+```
+
+#### p5/p5e/p5en Configuration (32 EFAs per instance)
+
+32 total EFAs provide 3200 Gbps, with 4 EFAs effectively allocated per GPU:
+
+```
+Instance: 8 GPUs, 32 EFAs (100 Gbps each)
+GPU 0 ──┬─→ EFA 0-3  (4×100G) ─→ Network
+GPU 1 ──┬─→ EFA 4-7  (4×100G) ─→ Network
+GPU 2 ──┬─→ EFA 8-11 (4×100G) ─→ Network
+...
+GPU 7 ──┬─→ EFA 28-31 (4×100G) ─→ Network
+                          = 400 Gbps per GPU = 50 GB/s per GPU
+```
+
+#### Alternative Multi-Rail Configurations
+
+Modern instances can use different EFA aggregations:
+
+| Config | EFAs/GPU | Per-EFA Speed | Total per GPU | Use Case |
+|--------|----------|---------------|---------------|----------|
+| 4×100G | 4 | 100 Gbps | 400 Gbps | p4d, p5 standard |
+| 2×200G | 2 | 200 Gbps | 400 Gbps | Future instances |
+| 1×400G | 1 | 400 Gbps | 400 Gbps | High-radix topologies |
+| 2×200G | 2 | 200 Gbps | 400 Gbps per GPU | Reduced NIC count, simpler topology |
 
 **Implementation:**
 - Expose each EFA as separate device to NCCL
 - NCCL distributes channels across devices
-- Aggregate bandwidth increases
+- Aggregate bandwidth increases linearly with NICs
+- Plugin handles rail reordering for optimal pairing ([src/platform-aws.cpp:983](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/platform-aws.cpp#L983))
 
 **Configuration:**
 ```bash
 # Automatic detection (default)
 # Or explicitly select
 NCCL_NET_GDR_LEVEL=LOC  # GPU-local NICs preferred
+NCCL_NCHANNELS=8       # Channels distributed across rails
 ```
 
 ### GPU Direct Support

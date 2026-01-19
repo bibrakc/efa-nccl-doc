@@ -94,7 +94,7 @@ rdma-core (libibverbs)
     ↓
 EFA Kernel Driver (efa.ko)
     ↓
-EFA Hardware (100-200 Gbps NIC)
+EFA Hardware (p4d: 4×100G, p5+: 32×100G EFAv3)
 ```
 
 ### Data Flow
@@ -178,12 +178,15 @@ NCCL_GRAPH_DUMP_FILE=nccl_graph.txt
 
 ### Bandwidth (Sustained)
 
-| Configuration | Target Bandwidth | Notes |
-|---------------|------------------|-------|
-| 1 EFA (100G)  | 11-12 GB/s       | ~96% line rate |
-| 2 EFAs        | 22-23 GB/s       | Linear scaling |
-| 4 EFAs        | 40-45 GB/s       | PCIe limit approaching |
-| 8 EFAs (p5)   | 80-100 GB/s      | PCIe Gen5 systems |
+| Instance Type | EFA per GPU | Total GPU | Target per GPU | Instance Total | Notes |
+|---------------|-------------|-----------|----------------|----------------|-------|
+| p4d.24xlarge  | 4×100G      | 8 A100    | ~50 GB/s       | ~400 GB/s      | Send/recv only |
+| p4de.24xlarge | 4×100G      | 8 A100    | ~50 GB/s       | ~400 GB/s      | Send/recv only |
+| p5.48xlarge   | 4×100G      | 8 H100    | ~50 GB/s       | ~400 GB/s      | RDMA supported |
+| p5e.48xlarge  | 32 EFAs (400G per GPU) | 8 H100 | ~50 GB/s | ~400 GB/s | RDMA supported |
+| p5en.48xlarge | 32 EFAs (400G per GPU) | 8 H200 | ~50 GB/s | ~400 GB/s | RDMA + EFAv3, 35% lower latency |
+
+**Note**: Total instance bandwidth: p4d/p4de = 400 Gbps, p5/p5e/p5en = 3200 Gbps. Each GPU gets ~400 Gbps (50 GB/s) of EFA bandwidth for collective operations.
 
 ### AllReduce (8 GPUs, Ring Algorithm)
 

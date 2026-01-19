@@ -35,11 +35,18 @@ EFA Adapter (NIC)
 ### Instance Support
 
 **EFA-Enabled Instance Types:**
-- **p4d.24xlarge**: 4x 100 Gbps EFA (400 Gbps total)
-- **p5.48xlarge**: 8x 200 Gbps EFA (1600 Gbps total - newest)
-- **p3dn.24xlarge**: 4x 100 Gbps EFA
-- **c5n.18xlarge**: 1x 100 Gbps EFA
-- **c6gn.16xlarge**: 1x 100 Gbps EFA
+
+**GPU Training Instances:**
+- **p4d.24xlarge**: 4×100G EFA (400 Gbps total, 8×A100 GPUs) - Send/recv only
+- **p4de.24xlarge**: 4×100G EFA (400 Gbps total, 8×A100 GPUs) - Send/recv only
+- **p5.48xlarge**: 32×100G EFA (3200 Gbps total, 8×H100 GPUs) - RDMA supported, EFAv2
+- **p5e.48xlarge**: 32×100G EFA (3200 Gbps total, 8×H100 GPUs) - RDMA supported, EFAv2
+- **p5en.48xlarge**: 32×100G EFA (3200 Gbps total, 8×H200 GPUs) - RDMA supported, EFAv3, 35% lower latency
+
+**Older/Compute Instances:**
+- **p3dn.24xlarge**: 4×100G EFA (older generation)
+- **c5n.18xlarge**: 1×100G EFA
+- **c6gn.16xlarge**: 1×100G EFA
 - And others...
 
 **Multi-Rail:**
