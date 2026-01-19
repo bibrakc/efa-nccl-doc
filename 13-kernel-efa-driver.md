@@ -186,7 +186,7 @@ int efa_alloc_pd(struct ib_pd *ibpd, struct ib_udata *udata)
 // Standard memory registration (CPU memory)
 struct ib_mr *efa_reg_mr(struct ib_pd *ibpd, u64 start, u64 length,
                          u64 virt_addr, int access_flags,
-                         struct ib_udata *udata)
+                         struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:2799](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.c#L2799))
 {
     struct efa_dev *dev = to_edev(ibpd->device);
     struct efa_mr *mr;
@@ -261,7 +261,7 @@ struct ib_mr *efa_reg_user_mr_dmabuf(struct ib_pd *ibpd, u64 start, u64 length,
 #endif
 
 // Memory deregistration
-int efa_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)
+int efa_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:3065](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.c#L3065))
 {
     struct efa_dev *dev = to_edev(ibmr->device);
     struct efa_mr *mr = to_emr(ibmr);
@@ -295,7 +295,7 @@ int efa_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)
 
 ```c
 int efa_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *init_attr,
-                  struct ib_udata *udata)
+                  struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:1216](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.c#L1216))
 {
     struct efa_dev *dev = to_edev(ibqp->pd->device);
     struct efa_qp *qp = to_eqp(ibqp);
@@ -341,7 +341,7 @@ int efa_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *init_attr,
 
 ```c
 int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
-                  struct ib_udata *udata)
+                  struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:2147](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.c#L2147))
 {
     struct efa_dev *dev = to_edev(ibcq->device);
     struct efa_cq *cq = to_ecq(ibcq);
@@ -514,7 +514,7 @@ static int efa_com_admin_q_comp_intr_handler(struct efa_com_admin_queue *aq)
 
 ```c
 // Main device structure
-struct efa_dev {
+struct efa_dev {  // ([kernel/linux/efa/src/efa.h:53-79](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa.h#L53-L79))
     struct ib_device ibdev;               // RDMA core device
     struct pci_dev *pdev;                 // PCI device
     struct efa_com_dev edev;              // Admin queue/command interface
@@ -536,7 +536,7 @@ struct efa_dev {
 };
 
 // Queue Pair
-struct efa_qp {
+struct efa_qp {  // ([kernel/linux/efa/src/efa.h:240-263](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa.h#L240-L263))
     struct ib_qp ibqp;
     u32 qp_handle;
     u32 qp_num;
@@ -546,7 +546,7 @@ struct efa_qp {
 };
 
 // Completion Queue
-struct efa_cq {
+struct efa_cq {  // ([kernel/linux/efa/src/efa.h:171-188](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa.h#L171-L188))
     struct ib_cq ibcq;
     u16 cq_idx;
     u32 cq_handle;
@@ -554,7 +554,7 @@ struct efa_cq {
 };
 
 // Memory Region
-struct efa_mr {
+struct efa_mr {  // ([kernel/linux/efa/src/efa.h:149-157](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa.h#L149-L157))
     struct ib_mr ibmr;
     struct ib_umem *umem;                 // Pinned user pages
     struct efa_mr_pbl pbl;                // Page buffer list

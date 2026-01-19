@@ -79,23 +79,51 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 ### 06-topology-and-binding.md ✅
 **Status**: Topology detection code examples, references libfabric functions already linked
 
+## Completed High-Value Documents (Session 2)
+
+### 11-rdma-core-and-verbs.md ✅
+**Status**: 15 permalinks added
+**Key structs/functions linked**:
+- `struct ibv_context` → [libibverbs/verbs.h:2069-2077](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2069-L2077)
+- `struct ibv_pd` → [libibverbs/verbs.h:639-642](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L639-L642)
+- `struct ibv_mr` → [libibverbs/verbs.h:675-683](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L675-L683)
+- `struct ibv_qp` → [libibverbs/verbs.h:1315-1325](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L1315-L1325)
+- `struct ibv_cq` → [libibverbs/verbs.h:1540-1550](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L1540-L1550)
+- `efa_alloc_context()`, `efa_reg_mr()`, `efa_create_qp()`, `efa_poll_cq()`
+- `ibv_get_device_list()`, `ibv_open_device()`, `ibv_alloc_pd()`, `ibv_reg_mr()`, `ibv_dereg_mr()`
+- `ibv_create_cq()`, `ibv_create_qp()`, `ibv_post_send()`, `ibv_post_recv()`, `ibv_poll_cq()`
+
+### 13-kernel-efa-driver.md ✅
+**Status**: 8 permalinks added
+**Key structs/functions linked**:
+- `struct efa_dev` → [kernel/linux/efa/src/efa.h:53-79](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa.h#L53-L79)
+- `struct efa_qp` → [kernel/linux/efa/src/efa.h:240-263](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa.h#L240-L263)
+- `struct efa_cq` → [kernel/linux/efa/src/efa.h:171-188](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa.h#L171-L188)
+- `struct efa_mr` → [kernel/linux/efa/src/efa.h:149-157](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa.h#L149-L157)
+- `efa_reg_mr()` → [kernel/linux/efa/src/efa_verbs.c:2799](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.c#L2799)
+- `efa_dereg_mr()` → [kernel/linux/efa/src/efa_verbs.c:3065](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.c#L3065)
+- `efa_create_qp()` → [kernel/linux/efa/src/efa_verbs.c:1216](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.c#L1216)
+- `efa_create_cq()` → [kernel/linux/efa/src/efa_verbs.c:2147](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.c#L2147)
+
+### 10-efa-provider.md ✅
+**Status**: 4 permalinks added
+**Key structs/functions linked**:
+- `struct efa_rdm_ep` → [prov/efa/src/rdm/efa_rdm_ep.h:46-120](https://github.com/ofiwg/libfabric/blob/6b9e629/prov/efa/src/rdm/efa_rdm_ep.h#L46-L120)
+- `struct efa_rdm_pke` → [prov/efa/src/rdm/efa_rdm_pke.h:78-100](https://github.com/ofiwg/libfabric/blob/6b9e629/prov/efa/src/rdm/efa_rdm_pke.h#L78-L100)
+- `struct efa_mr` → [prov/efa/src/efa_mr.h:20-32](https://github.com/ofiwg/libfabric/blob/6b9e629/prov/efa/src/efa_mr.h#L20-L32)
+
 ## Remaining Documents
 
-### Documents with significant linkable content:
-- 10-efa-provider.md - EFA provider internal structs (libfabric)
-- 11-rdma-core-and-verbs.md - ibv_* structs/functions (rdma-core)
-- 13-kernel-efa-driver.md - Kernel efa_* structs (amzn-drivers)
-- 20-rdma-memreg.md - Memory registration flow across layers
-
-### Documents with moderate linkable content:
-- 12-lkey-rkey-explained.md - References structs already linked
-- 14-efa-driver.md - High-level driver overview
-- 19-threading-model.md - Threading concepts
-- 22-optimizations.md - Optimization techniques
+### Documents reviewed - no new linkable content:
+- 20-rdma-memreg.md - References functions already linked in other documents ✅
+- 12-lkey-rkey-explained.md - References structs already linked ✅
+- 14-efa-driver.md - High-level driver overview, conceptual ✅
+- 19-threading-model.md - Threading concepts, no source code references ✅
+- 22-optimizations.md - Optimization techniques, conceptual ✅
 
 ### Documents with limited/no linkable content:
 - 15-cuda-memory.md - CUDA APIs (not in our repos)
-- 16-dmabuf-gpu-memory.md - Kernel dmabuf APIs
+- 16-dmabuf-gpu-memory.md - Kernel dmabuf APIs (external)
 - 17-neuron-memory.md - AWS Neuron APIs (not in our repos)
 - 18-rocm-memory.md - AMD ROCm APIs (not in our repos)
 - 21-optimization-opportunities.md - Conceptual recommendations
@@ -103,12 +131,17 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 ## Summary Statistics
 
 ### Completed
-- **Documents processed**: 10 / 23
-  - 4 documents from previous work (04, 05, 07, 08)
-  - 6 documents in this session (00, 01, 02, 03, 06, 09)
+- **Documents processed**: 18 / 23
+  - 4 documents from session 1 (04, 05, 07, 08)
+  - 6 documents from session 1 continuation (00, 01, 02, 03, 06, 09)
+  - 3 documents from session 2 (10, 11, 13)
+  - 5 documents reviewed in session 2 (12, 14, 19, 20, 22)
 
-### New Permalinks Added in This Session
-- **09-libfabric-overview.md**: 16 permalinks
+### New Permalinks Added in Session 2
+- **11-rdma-core-and-verbs.md**: 15 permalinks
+- **13-kernel-efa-driver.md**: 8 permalinks
+- **10-efa-provider.md**: 4 permalinks
+- **Session 2 total**: 27 permalinks
 
 ### Total Permalinks Added
 - **04-ofi-plugin.md**: 42 permalinks
@@ -116,22 +149,28 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 - **07-freelist-allocator.md**: 8 permalinks
 - **08-mr-cache-implementation.md**: 6 permalinks
 - **09-libfabric-overview.md**: 16 permalinks
-- **Total**: ~88 permalinks
+- **10-efa-provider.md**: 4 permalinks
+- **11-rdma-core-and-verbs.md**: 15 permalinks
+- **13-kernel-efa-driver.md**: 8 permalinks
+- **Grand Total**: 115 permalinks
 
 ### Unique Structs/Functions Linked
 - aws-ofi-nccl: ~15 unique structs/functions
-- libfabric: ~25 unique structs/functions
-- Total: ~40 unique items
+- libfabric: ~30 unique structs/functions
+- rdma-core: ~15 unique structs/functions
+- amzn-drivers: ~8 unique structs/functions
+- Total: ~68 unique items
 
 ### Repositories Covered
-✅ aws-ofi-nccl
-✅ libfabric
-⏳ rdma-core (ready to link)
-⏳ amzn-drivers (ready to link)
-⏳ linux (available if needed)
+✅ aws-ofi-nccl (commit: 75240c8)
+✅ libfabric (commit: 6b9e629)
+✅ rdma-core (commit: 6e9643e)
+✅ amzn-drivers (commit: 8a8b6f2)
+⏳ linux (available if needed, commit: e84d960)
 
 ## Key Accomplishments
 
+### Session 1
 1. **Core libfabric API documented** in 09-libfabric-overview.md:
    - All major data structures (fi_info, fid_domain, fid_ep, fid_cq, fid_av, fid_mr)
    - All major operations (send, recv, tagged, RMA, completion)
@@ -146,17 +185,20 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
    - Freelist allocator structures
    - MR cache implementation
 
-## Next Priority Documents
+### Session 2
+4. **rdma-core/libibverbs API documented** in 11-rdma-core-and-verbs.md:
+   - Core data structures (ibv_context, ibv_pd, ibv_mr, ibv_qp, ibv_cq)
+   - All major verbs operations (device, PD, MR, QP, CQ management)
+   - EFA provider-specific implementations
 
-### High Value (Many Links Possible)
-1. **11-rdma-core-and-verbs.md** - ibv_* API (rdma-core)
-2. **13-kernel-efa-driver.md** - Kernel structures (amzn-drivers)
-3. **10-efa-provider.md** - EFA provider internals (libfabric)
+5. **EFA kernel driver documented** in 13-kernel-efa-driver.md:
+   - Kernel data structures (efa_dev, efa_qp, efa_cq, efa_mr)
+   - Memory registration functions (efa_reg_mr, efa_dereg_mr)
+   - Queue and completion management
 
-### Medium Value
-4. **20-rdma-memreg.md** - Cross-layer memory registration
-5. **12-lkey-rkey-explained.md** - Key concepts
-6. **14-efa-driver.md** - Driver architecture
+6. **EFA provider internals documented** in 10-efa-provider.md:
+   - RDM endpoint structures (efa_rdm_ep, efa_rdm_pke)
+   - Memory region wrappers (efa_mr)
 
 ## Notes
 
