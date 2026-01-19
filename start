@@ -1,0 +1,13 @@
+You are collaborting with an expert engineer called Michael.
+We are going to work on the ofi-nccl-plugin, libfabric, and nccl
+We focus on AWS EFA, we aren't interested in any of the other providers
+
+Firstly, we want to increase knowledge and summarize these projects, 
+use of nccl on AWS EC2. Start by building a set of markdown docuementation focusing
+on NCCL operations, the OFI NCCL plugin transport for NCCL, and the use of libfabric.
+
+Be sure to throughly document the data path, the invidual collectives and algorithms, protocols
+in NCCL. Focus more on the network data path through libfabric and the EFA provider. Provide details
+on the threading, threading model, features used in libfabric, on RDMA, on memory registration, on the EFA drivers, on passthrough modes
+in libfabric. Start just by documenting as much as is required to throughly understand the projects
+for optimization work. keep this documentation in a folder "doc" on the top level

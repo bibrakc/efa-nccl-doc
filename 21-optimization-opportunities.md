@@ -21,7 +21,7 @@ Based on analysis of the NCCL + OFI + libfabric + EFA stack, this document ident
 
 ### Current Performance Impact
 
-From [08-rdma-memreg.md](doc/08-rdma-memreg.md):
+From [20-rdma-memreg.md](doc/20-rdma-memreg.md):
 
 ```
 Operation                   Time (typical)
@@ -175,7 +175,7 @@ void init_gpu_pool() {
 
 **Current Issue**: memhooks/userfaultfd overhead
 
-From [08-rdma-memreg.md](doc/08-rdma-memreg.md):
+From [20-rdma-memreg.md](doc/20-rdma-memreg.md):
 
 ```bash
 # memhooks: LD_PRELOAD intercepts every malloc/free
@@ -212,7 +212,7 @@ void training_mode_end() {
 
 ### Current Latency Breakdown
 
-From [10-optimizations.md](doc/10-optimizations.md):
+From [22-optimizations.md](doc/22-optimizations.md):
 
 ```
 Component                    Time (μs)
@@ -413,7 +413,7 @@ Proposed Hybrid:
 
 **Opportunity**: Leverage EFA's eager/rendezvous efficiently
 
-From [06-efa-provider.md](doc/06-efa-provider.md):
+From [10-efa-provider.md](doc/10-efa-provider.md):
 
 ```
 Eager threshold: 64 KB (configurable via FI_EFA_RDM_LONG_MSG_SIZE)
@@ -444,7 +444,7 @@ NCCL_PROTO_LL128_MAX_SIZE=65536   # Match EFA's 64KB eager
 
 ### Current State
 
-From [06-efa-provider.md](doc/06-efa-provider.md):
+From [10-efa-provider.md](doc/10-efa-provider.md):
 
 ```
 p4d.24xlarge: 4x 100 Gbps EFA (400 Gbps total)
@@ -540,7 +540,7 @@ void rebalance_nics() {
 
 ### Current State
 
-From [07-threading-model.md](doc/07-threading-model.md):
+From [19-threading-model.md](doc/19-threading-model.md):
 
 ```c
 // NCCL proxy thread
@@ -649,7 +649,7 @@ void smart_progress() {
 
 ### Current Issues
 
-From [07-threading-model.md](doc/07-threading-model.md):
+From [19-threading-model.md](doc/19-threading-model.md):
 
 ```
 Cross-NUMA access:

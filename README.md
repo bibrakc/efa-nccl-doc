@@ -18,25 +18,36 @@ This documentation provides in-depth coverage of the complete stack used for GPU
 ### Transport Layer
 
 - **[04-ofi-plugin.md](04-ofi-plugin.md)** - OFI NCCL plugin architecture and implementation
-- **[05-libfabric-overview.md](05-libfabric-overview.md)** - Libfabric API, capabilities, data transfer operations
-- **[06-efa-provider.md](06-efa-provider.md)** - EFA provider specifics, SRD protocol, eager/rendezvous protocols
+- **[09-libfabric-overview.md](09-libfabric-overview.md)** - Libfabric API, capabilities, data transfer operations
+- **[10-efa-provider.md](10-efa-provider.md)** - EFA provider specifics, SRD protocol, eager/rendezvous protocols
 
 ### System Level
 
-- **[07-threading-model.md](07-threading-model.md)** - Threading across the stack, proxy threads, concurrency
-- **[08-rdma-memreg.md](08-rdma-memreg.md)** - RDMA operations, memory registration, caching strategies
-- **[09-efa-driver.md](09-efa-driver.md)** - EFA kernel driver architecture, queue management, GPUDirect
+- **[19-threading-model.md](19-threading-model.md)** - Threading across the stack, proxy threads, concurrency
+- **[20-rdma-memreg.md](20-rdma-memreg.md)** - RDMA operations, memory registration, caching strategies
+- **[14-efa-driver.md](14-efa-driver.md)** - EFA kernel driver architecture, queue management, GPUDirect
 
 ### Performance
 
-- **[10-optimizations.md](10-optimizations.md)** - Kernel bypass, caching, tuning parameters, best practices
-- **[11-optimization-opportunities.md](11-optimization-opportunities.md)** - Detailed analysis of optimization opportunities with priorities
+- **[22-optimizations.md](22-optimizations.md)** - Kernel bypass, caching, tuning parameters, best practices
+- **[21-optimization-opportunities.md](21-optimization-opportunities.md)** - Detailed analysis of optimization opportunities with priorities
 
 ### Deep Dives
 
 - **[12-lkey-rkey-explained.md](12-lkey-rkey-explained.md)** - Understanding local and remote keys in RDMA
-- **[13-ofi-plugin-protocols.md](13-ofi-plugin-protocols.md)** - Connection establishment and send/recv protocols
-- **[14-topology-and-binding.md](14-topology-and-binding.md)** - Topology detection and interface binding mechanisms
+- **[05-ofi-plugin-protocols.md](05-ofi-plugin-protocols.md)** - Connection establishment and send/recv protocols
+- **[06-topology-and-binding.md](06-topology-and-binding.md)** - Topology detection and interface binding mechanisms
+- **[07-freelist-allocator.md](07-freelist-allocator.md)** - Freelist allocator for high-performance object pooling (20-100x faster than malloc)
+- **[08-mr-cache-implementation.md](08-mr-cache-implementation.md)** - Memory registration cache implementation details (25x speedup)
+- **[11-rdma-core-and-verbs.md](11-rdma-core-and-verbs.md)** - rdma-core library and libibverbs API
+- **[13-kernel-efa-driver.md](13-kernel-efa-driver.md)** - Linux kernel EFA driver internals
+
+### GPU and Accelerator Memory
+
+- **[15-cuda-memory.md](15-cuda-memory.md)** - NVIDIA CUDA memory: dynamic loading, cross-version compatibility, GPUDirect, GDRCopy
+- **[16-dmabuf-gpu-memory.md](16-dmabuf-gpu-memory.md)** - DMA-BUF framework for vendor-neutral GPU memory registration
+- **[17-neuron-memory.md](17-neuron-memory.md)** - AWS Trainium/Inferentia with P2P registration (not dmabuf)
+- **[18-rocm-memory.md](18-rocm-memory.md)** - AMD ROCm with HIP API (CUDA-compatible)
 
 ## Quick Start
 
@@ -47,18 +58,22 @@ Start with these documents in order:
 1. [00-overview.md](00-overview.md) - Get the big picture
 2. [01-nccl-core.md](01-nccl-core.md) - Understand NCCL basics
 3. [03-nccl-datapath.md](03-nccl-datapath.md) - Follow a message through the system
-4. [10-optimizations.md](10-optimizations.md) - Apply optimizations
+4. [22-optimizations.md](22-optimizations.md) - Apply optimizations
 
 ### For Specific Topics
 
-- **Performance tuning** → [10-optimizations.md](10-optimizations.md), [11-optimization-opportunities.md](11-optimization-opportunities.md)
-- **Debugging network issues** → [04-ofi-plugin.md](04-ofi-plugin.md), [06-efa-provider.md](06-efa-provider.md)
+- **Performance tuning** → [22-optimizations.md](22-optimizations.md), [21-optimization-opportunities.md](21-optimization-opportunities.md)
+- **Debugging network issues** → [04-ofi-plugin.md](04-ofi-plugin.md), [10-efa-provider.md](10-efa-provider.md)
 - **Algorithm selection** → [02-nccl-collectives.md](02-nccl-collectives.md)
-- **Memory registration problems** → [08-rdma-memreg.md](08-rdma-memreg.md)
-- **Threading issues** → [07-threading-model.md](07-threading-model.md)
-- **Connection protocols** → [13-ofi-plugin-protocols.md](13-ofi-plugin-protocols.md)
-- **Topology and multi-NIC** → [14-topology-and-binding.md](14-topology-and-binding.md)
+- **Memory registration problems** → [20-rdma-memreg.md](20-rdma-memreg.md), [08-mr-cache-implementation.md](08-mr-cache-implementation.md)
+- **Threading issues** → [19-threading-model.md](19-threading-model.md)
+- **Connection protocols** → [05-ofi-plugin-protocols.md](05-ofi-plugin-protocols.md)
+- **Topology and multi-NIC** → [06-topology-and-binding.md](06-topology-and-binding.md)
 - **Understanding RDMA keys** → [12-lkey-rkey-explained.md](12-lkey-rkey-explained.md)
+- **Memory allocators & caching** → [07-freelist-allocator.md](07-freelist-allocator.md), [08-mr-cache-implementation.md](08-mr-cache-implementation.md)
+- **GPU memory registration** → [15-cuda-memory.md](15-cuda-memory.md), [16-dmabuf-gpu-memory.md](16-dmabuf-gpu-memory.md), [17-neuron-memory.md](17-neuron-memory.md), [18-rocm-memory.md](18-rocm-memory.md)
+- **Kernel driver details** → [13-kernel-efa-driver.md](13-kernel-efa-driver.md)
+- **Userspace RDMA API** → [11-rdma-core-and-verbs.md](11-rdma-core-and-verbs.md)
 
 ## Key Concepts
 
@@ -75,9 +90,11 @@ Libfabric (Fabric Abstraction)
     ↓
 EFA Provider (Hardware-Specific)
     ↓
-EFA Kernel Driver
+rdma-core (libibverbs)
     ↓
-EFA Hardware (100G+ NIC)
+EFA Kernel Driver (efa.ko)
+    ↓
+EFA Hardware (100-200 Gbps NIC)
 ```
 
 ### Data Flow
