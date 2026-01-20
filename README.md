@@ -216,6 +216,17 @@ This documentation is focused on understanding the existing implementation for o
 
 ## Changelog
 
+### 2026-01-20
+
+#### Documentation Organization and Improvements
+- **Reorganized rdma-core documentation** - Moved [rdma-core-and-verbs.md](rdma-core-and-verbs.md) from Deep Dives to Transport Layer section in README, better reflecting its role as the critical layer between libfabric and kernel driver
+- **Added rdma-core to stack diagrams** - Updated [overview.md](overview.md) Architecture Stack to include rdma-core (libibverbs) layer with userspace verbs library, EFA provider plugin, and zero-copy queue operations
+- **Enhanced data path documentation** - Updated [nccl-datapath.md](nccl-datapath.md) to include rdma-core layer showing ibv_post_send/recv operations (~100-200ns), memory-mapped queue writes, and doorbell rings with zero syscalls
+- **Component roles expansion** - Added rdma-core component description in overview.md explaining its purpose as userspace RDMA verbs library with hardware-agnostic API and provider plugins
+- **Data flow clarification** - Expanded data flow steps to explicitly show rdma-core posting work requests via verbs API and EFA kernel driver managing memory registration via uverbs interface
+- **Added DRAFT warnings** - Added prominent verification warnings to all algorithm documentation files (Ring, Tree, NVLS Tree, PAT) indicating theoretical derivations need independent validation
+- **Simplified algorithm descriptions** - Changed algorithm descriptions in README to simple one-sentence summaries without formulas or performance claims
+
 ### 2026-01-19
 
 #### Algorithm Documentation
