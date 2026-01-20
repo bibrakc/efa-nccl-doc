@@ -131,36 +131,6 @@ EFA Hardware (p4d: 4×100G, p5+: 32×100G EFAv3)
 5. **CPU Affinity** - Pin proxy threads to avoid NUMA remote access
 6. **Kernel Bypass** - Direct user-space access to hardware
 
-## Performance Targets
-
-### Latency (Single Message)
-
-| Message Size | Target Latency | Notes |
-|--------------|----------------|-------|
-| 8 bytes      | 10-15 μs       | Protocol overhead dominates |
-| 1 KB         | 12-20 μs       | LL protocol optimal |
-| 64 KB        | 20-30 μs       | LL128 protocol |
-| 1 MB         | 100-200 μs     | Simple protocol |
-
-### Bandwidth (Sustained)
-
-| Instance Type | EFA per GPU | Total GPU | Target per GPU | Instance Total | Notes |
-|---------------|-------------|-----------|----------------|----------------|-------|
-| p4d.24xlarge  | 4×100G      | 8 A100    | ~50 GB/s       | ~400 GB/s      | Send/recv only |
-| p4de.24xlarge | 4×100G      | 8 A100    | ~50 GB/s       | ~400 GB/s      | Send/recv only |
-| p5.48xlarge   | 4×100G      | 8 H100    | ~50 GB/s       | ~400 GB/s      | RDMA supported |
-| p5e.48xlarge  | 32 EFAs (400G per GPU) | 8 H100 | ~50 GB/s | ~400 GB/s | RDMA supported |
-| p5en.48xlarge | 32 EFAs (400G per GPU) | 8 H200 | ~50 GB/s | ~400 GB/s | RDMA + EFAv3, 35% lower latency |
-
-**Note**: Total instance bandwidth: p4d/p4de = 400 Gbps, p5/p5e/p5en = 3200 Gbps. Each GPU gets ~400 Gbps (50 GB/s) of EFA bandwidth for collective operations.
-
-### AllReduce (8 GPUs, Ring Algorithm)
-
-| Data Size | Latency | Bus Bandwidth | Notes |
-|-----------|---------|---------------|-------|
-| 128 MB    | 5-10 ms | 100+ GB/s     | Typical gradient size |
-| 1 GB      | 40-80 ms| 100+ GB/s     | Large model |
-
 ## Benchmarking
 
 ### NCCL Tests
