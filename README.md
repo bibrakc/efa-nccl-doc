@@ -76,7 +76,8 @@ Start with these documents in order:
 
 - **Performance tuning** → [optimizations.md](optimizations.md), [optimization-opportunities.md](optimization-opportunities.md)
 - **Debugging network issues** → [ofi-plugin.md](ofi-plugin.md), [efa-provider.md](efa-provider.md)
-- **Algorithm selection** → [nccl-collectives.md](nccl-collectives.md)
+- **Algorithm selection** → [nccl-collectives.md](nccl-collectives.md), [algorithms/](algorithms/) for detailed analysis
+- **Collective algorithms deep dive** → [algorithms/ring-algorithm.md](algorithms/ring-algorithm.md), [algorithms/tree-algorithm.md](algorithms/tree-algorithm.md), [algorithms/nvls-tree-algorithm.md](algorithms/nvls-tree-algorithm.md), [algorithms/pat-algorithm.md](algorithms/pat-algorithm.md)
 - **Memory registration problems** → [rdma-memreg.md](rdma-memreg.md), [mr-cache-implementation.md](mr-cache-implementation.md)
 - **Threading issues** → [threading-model.md](threading-model.md)
 - **Connection protocols** → [ofi-plugin-protocols.md](ofi-plugin-protocols.md)
@@ -124,8 +125,8 @@ EFA Hardware (p4d: 4×100G, p5+: 32×100G EFAv3)
 ### Critical Performance Factors
 
 1. **Memory Registration Caching** - Estimated 100-500x speedup for repeated transfers
-2. **Algorithm Selection** - Ring for large messages, Tree for small
-3. **Protocol Selection** - LL for latency, Simple for bandwidth
+2. **Algorithm Selection** - Ring for large messages (>1 MB), Tree for medium (100 KB-1 MB), PAT for small-medium at scale (32 KB-1 MB), NVLS Tree for intra-node with NVSwitch. See [algorithms/](algorithms/) for complete mathematical analysis
+3. **Protocol Selection** - LL for latency (<32 KB), LL128 for balanced (32 KB-1 MB), Simple for bandwidth (>1 MB)
 4. **Multi-rail** - Utilize all EFA adapters (4-8 per instance)
 5. **CPU Affinity** - Pin proxy threads to avoid NUMA remote access
 6. **Kernel Bypass** - Direct user-space access to hardware
@@ -216,12 +217,24 @@ This documentation is focused on understanding the existing implementation for o
 ## Changelog
 
 ### 2026-01-19
+
+#### Algorithm Documentation
+- Added **[algorithms/ring-algorithm.md](algorithms/ring-algorithm.md)** with complete mathematical latency derivation (`T = 2(N-1)×α + 2β×S×(N-1)/N`), bandwidth analysis proving ~100% utilization, O(N) scaling analysis, protocol-specific equations (Simple/LL128/LL), and concrete p5 instance examples
+- Added **[algorithms/tree-algorithm.md](algorithms/tree-algorithm.md)** with double binary tree algorithm, O(log N) latency derivation (`T = 2×log₂(N)×α + log₂(N)×β×S`), ~67% bandwidth utilization analysis for N=8, tree topology construction, and comparison with Ring showing log vs linear scaling
+- Added **[algorithms/nvls-tree-algorithm.md](algorithms/nvls-tree-algorithm.md)** documenting NVLink SHARP hardware acceleration, NVSwitch multicast mechanisms, in-network reduction, intra-node latency (`T = 2×α_nvls + 2×β_nvlink×S`), multi-node extensions, 2-10× speedup for small messages, and p5/p5en specific performance on Hopper/Blackwell GPUs
+- Added **[algorithms/pat-algorithm.md](algorithms/pat-algorithm.md)** for Parallel Aggregated Trees (NCCL 2.23+), adaptive logarithmic-to-linear communication strategy, AllGather derivation (`T = log₂(N)×α + β×S×(1-1/N)`), achieving O(log N) latency with ~100% bandwidth, optimal for 32 KB-1 MB messages at scale, and LLM training use cases
+- All algorithm files include complete α-β model derivations, step-by-step walkthroughs, protocol analysis, crossover point calculations, and AWS instance benchmarks
+
+#### Hardware and Protocol Documentation
 - Added comprehensive **[efa-hardware-architecture.md](efa-hardware-architecture.md)** documenting EFA queue pairs, completion queues, work queue entries, memory layout, and programming model
 - Added **[srd-protocol.md](srd-protocol.md)** documenting AWS's Scalable Reliable Datagram protocol with multipath routing (64 paths), hardware-based congestion control, and reliability mechanisms
 - Added **[nccl-tuner.md](nccl-tuner.md)** documenting NCCL's cost-based tuner, algorithm/protocol selection, channel count tuning, and AWS OFI region-based tuner with geometric selection
+
+#### Improvements
 - Updated all numerical performance claims to be properly qualified as estimates or approximations
 - Removed file numbering from all documentation files to ease maintenance
 - Removed Troubleshooting section from README
+- Added algorithm documentation section to Quick Start guide
 
 ### 2026-01-17
 - Initial comprehensive documentation
