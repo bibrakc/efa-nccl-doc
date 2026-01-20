@@ -1,5 +1,13 @@
 # NVLS Tree AllReduce Algorithm
 
+> ## ⚠️ DRAFT - NEEDS VERIFICATION ⚠️
+>
+> **This document contains theoretical derivations and performance analysis that have NOT been fully verified.**
+>
+> All latency formulas, bandwidth calculations, and performance claims should be independently validated before being used for system design or optimization decisions. The mathematical derivations may contain errors or oversimplifications.
+>
+> Please treat all content as preliminary and subject to revision.
+
 ## Overview
 
 The **NVLS Tree algorithm** combines NCCL's tree-based approach with **NVLink SHARP** (NVLS) hardware acceleration available in NVSwitch systems. It leverages in-network multicast and reduction capabilities to achieve dramatically lower latency while maintaining high bandwidth.

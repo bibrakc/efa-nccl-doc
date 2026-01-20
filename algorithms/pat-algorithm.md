@@ -1,5 +1,13 @@
 # PAT Algorithm - Parallel Aggregated Trees
 
+> ## ⚠️ DRAFT - NEEDS VERIFICATION ⚠️
+>
+> **This document contains theoretical derivations and performance analysis that have NOT been fully verified.**
+>
+> All latency formulas, bandwidth calculations, and performance claims should be independently validated before being used for system design or optimization decisions. The mathematical derivations may contain errors or oversimplifications.
+>
+> Please treat all content as preliminary and subject to revision.
+
 **Purpose**: Understand the PAT (Parallel Aggregated Trees) algorithm for AllGather and ReduceScatter operations in NCCL, including its adaptive communication strategy, latency equations, and when to use it versus Ring or Tree algorithms.
 
 ---
