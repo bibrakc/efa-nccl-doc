@@ -18,10 +18,10 @@ This documentation provides in-depth coverage of the complete stack used for GPU
 
 ### Collective Algorithms (Detailed Analysis)
 
-- **[algorithms/ring-algorithm.md](algorithms/ring-algorithm.md)** - Ring AllReduce with complete latency derivation, bandwidth analysis, O(N) scaling
-- **[algorithms/tree-algorithm.md](algorithms/tree-algorithm.md)** - Double binary tree with O(log N) latency derivation, ~67% bandwidth utilization
-- **[algorithms/nvls-tree-algorithm.md](algorithms/nvls-tree-algorithm.md)** - NVLS Tree with NVSwitch multicast acceleration, 2-10× speedup for small messages
-- **[algorithms/pat-algorithm.md](algorithms/pat-algorithm.md)** - Parallel Aggregated Trees (PAT) with adaptive logarithmic-to-linear communication
+- **[algorithms/ring-algorithm.md](algorithms/ring-algorithm.md)** - Ring algorithm arranges GPUs in a circular topology for bandwidth-optimal collective operations
+- **[algorithms/tree-algorithm.md](algorithms/tree-algorithm.md)** - Double binary tree algorithm provides latency-optimized communication for small to medium messages
+- **[algorithms/nvls-tree-algorithm.md](algorithms/nvls-tree-algorithm.md)** - NVLS Tree combines tree-based communication with NVSwitch hardware acceleration for reduced latency
+- **[algorithms/pat-algorithm.md](algorithms/pat-algorithm.md)** - Parallel Aggregated Trees uses adaptive communication patterns for AllGather and ReduceScatter operations
 
 ### EFA Hardware and Protocol
 
