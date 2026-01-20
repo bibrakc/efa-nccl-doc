@@ -31,10 +31,17 @@ This documentation covers the integration of NVIDIA NCCL (NVIDIA Collective Comm
 └─────────────────────────────────────────────┘
                     │
 ┌─────────────────────────────────────────────┐
+│         rdma-core (libibverbs)              │
+│  - Userspace verbs library                  │
+│  - EFA provider plugin                      │
+│  - Zero-copy queue operations               │
+└─────────────────────────────────────────────┘
+                    │
+┌─────────────────────────────────────────────┐
 │          EFA Kernel Driver                  │
-│  - RDMA operations                          │
+│  - Device control (uverbs interface)        │
 │  - Memory registration                      │
-│  - Hardware interface                       │
+│  - Hardware resource management             │
 └─────────────────────────────────────────────┘
                     │
 ┌─────────────────────────────────────────────┐
@@ -59,6 +66,11 @@ This documentation covers the integration of NVIDIA NCCL (NVIDIA Collective Comm
 - **Key Features**: Provider abstraction, RDMA support, various transport modes
 - **Focus Areas**: EFA provider, threading model, memory registration, passthrough modes
 
+### rdma-core (libibverbs)
+- **Purpose**: Userspace RDMA verbs library
+- **Key Features**: Hardware-agnostic verbs API, provider plugins, zero-copy operations
+- **Focus Areas**: ibv_post_send/recv, ibv_poll_cq, memory-mapped queues, EFA provider
+
 ### AWS EFA
 - **Purpose**: High-performance network interface for EC2 instances
 - **Key Features**: RDMA-like performance, OS bypass, scalable
@@ -69,9 +81,10 @@ This documentation covers the integration of NVIDIA NCCL (NVIDIA Collective Comm
 1. **Application** issues collective operation (e.g., AllReduce)
 2. **NCCL** breaks down collective into point-to-point operations based on algorithm
 3. **OFI Plugin** translates NCCL network calls to libfabric operations
-4. **Libfabric EFA Provider** converts to EFA-specific operations
-5. **EFA Driver** executes RDMA operations on hardware
-6. **EFA Hardware** transfers data across network fabric
+4. **Libfabric EFA Provider** converts to libfabric-agnostic operations
+5. **rdma-core (libibverbs)** posts work requests via verbs API (ibv_post_send/recv)
+6. **EFA Kernel Driver** manages memory registration and device control via uverbs
+7. **EFA Hardware** performs zero-copy DMA and transmits over network fabric
 
 ## Key Concepts
 
@@ -105,6 +118,7 @@ Communication patterns within NCCL:
 - `ofi-plugin.md` - OFI NCCL plugin architecture
 - `libfabric-overview.md` - Libfabric architecture and APIs
 - `efa-provider.md` - EFA provider specifics in libfabric
+- `rdma-core-and-verbs.md` - rdma-core userspace library and libibverbs API
 - `threading-model.md` - Threading and concurrency
 - `rdma-memreg.md` - RDMA operations and memory registration
 - `efa-driver.md` - EFA kernel driver architecture

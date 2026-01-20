@@ -39,7 +39,13 @@ Source GPU                                    Destination GPU
      │                                           │
      ▼                                           │
 ┌──────────────────────────────────────┐   ┌────────────────┐
-│           EFA Driver                │   │   EFA Driver   │
+│     rdma-core (libibverbs)          │   │  rdma-core     │
+│     - ibv_post_send/recv            │   │  - ibv_poll_cq │
+└────┬─────────────────────────────────┘   └────▲───────────┘
+     │                                           │
+     ▼                                           │
+┌──────────────────────────────────────┐   ┌────────────────┐
+│      EFA Driver (uverbs)            │   │   EFA Driver   │
 └────┬─────────────────────────────────┘   └────▲───────────┘
      │                                           │
      └────────────────► Network ────────────────┘
@@ -142,22 +148,38 @@ fi_write(ep, buf, len, desc, dest_addr, remote_addr,
 - Validate endpoint
 - Prepare EFA-specific headers
 - Queue work request
-- Post to EFA driver
+- Call rdma-core verbs
 
-- **Timing**: ~1-2 μs
+- **Timing**: ~500-1000 ns
 
-#### 7. EFA Driver
+#### 7. rdma-core (libibverbs)
+
+```c
+// Libfabric EFA provider calls verbs API
+ibv_post_send(qp, &wr, &bad_wr);
+// or
+ibv_post_recv(qp, &wr, &bad_wr);
+```
+
+**rdma-core Actions:**
+- Write work queue entry (WQE) to memory-mapped send queue
+- Ring doorbell (MMIO write to notify hardware)
+- **Zero syscalls** - entirely userspace operation
+
+- **Timing**: ~100-200 ns (memory writes + doorbell)
+
+#### 8. EFA Driver
 
 **Driver Actions:**
-- DMA setup
-- Build EFA protocol header
-- Queue to hardware ring
-- Ring doorbell
+- Hardware reads WQE from memory-mapped queue (triggered by doorbell)
+- DMA setup (uses pre-registered memory mapping)
+- Build EFA protocol header (SRD)
+- Hardware fetches data directly from source memory
 
-- **Timing**: ~1-2 μs
-- **Memory Access**: Direct via IOMMU
+- **Timing**: Hardware operation (no driver software in data path)
+- **Memory Access**: Direct DMA via IOMMU
 
-#### 8. Network Transfer
+#### 9. Network Transfer
 
 **Hardware Actions:**
 - EFA NIC reads memory via PCIe
@@ -170,12 +192,16 @@ fi_write(ep, buf, len, desc, dest_addr, remote_addr,
   - Latency: ~10-20 μs (base)
   - Bandwidth: ~100 Gbps (EFA)
 
-#### 9. Receiver Side
+#### 10. Receiver Side
 
 **Reverse Flow:**
 ```
+EFA Hardware
+  ↓ DMA to memory, write completion
 EFA Driver
-  ↓ Completion Queue Event
+  ↓ Completion in memory-mapped CQ
+rdma-core
+  ↓ ibv_poll_cq() reads completion
 Libfabric
   ↓ fi_cq_read()
 OFI Plugin
@@ -187,9 +213,9 @@ NCCL Kernel
 GPU Memory
 ```
 
-#### 10. Completion
+#### 11. Completion
 
-- Proxy polls completion queue
+- Proxy polls completion queue (via ibv_poll_cq in rdma-core)
 - Updates NCCL state
 - GPU kernel completes
 - CUDA stream progresses
