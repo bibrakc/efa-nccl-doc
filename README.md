@@ -16,6 +16,13 @@ This documentation provides in-depth coverage of the complete stack used for GPU
 - **[nccl-tuner.md](nccl-tuner.md)** - Cost-based algorithm/protocol selection, AWS region-based tuner, channel count tuning
 - **[nccl-datapath.md](nccl-datapath.md)** - Complete data path from GPU through network
 
+### Collective Algorithms (Detailed Analysis)
+
+- **[algorithms/ring-algorithm.md](algorithms/ring-algorithm.md)** - Ring AllReduce with complete latency derivation, bandwidth analysis, O(N) scaling
+- **[algorithms/tree-algorithm.md](algorithms/tree-algorithm.md)** - Double binary tree with O(log N) latency derivation *(coming soon)*
+- **[algorithms/nvls-tree-algorithm.md](algorithms/nvls-tree-algorithm.md)** - NVLS Tree with NVSwitch multicast acceleration *(coming soon)*
+- **[algorithms/pat-algorithm.md](algorithms/pat-algorithm.md)** - Pipelined All-reduce Tree algorithm *(coming soon)*
+
 ### EFA Hardware and Protocol
 
 - **[efa-hardware-architecture.md](efa-hardware-architecture.md)** - EFA queue pairs, completion queues, work queue entries, memory layout, hardware capabilities
