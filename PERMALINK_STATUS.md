@@ -112,6 +112,75 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 - `struct efa_rdm_pke` → [prov/efa/src/rdm/efa_rdm_pke.h:78-100](https://github.com/ofiwg/libfabric/blob/6b9e629/prov/efa/src/rdm/efa_rdm_pke.h#L78-L100)
 - `struct efa_mr` → [prov/efa/src/efa_mr.h:20-32](https://github.com/ofiwg/libfabric/blob/6b9e629/prov/efa/src/efa_mr.h#L20-L32)
 
+## Session 3: Hardware & Protocol Documentation
+
+### efa-hardware-architecture.md ✅
+**Status**: 21 permalinks added
+**Key structs/enums/functions linked**:
+- `enum efa_io_queue_type` → [efa_io_defs.h:15-20](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L15-L20)
+- `enum efa_io_send_op_type` → [efa_io_defs.h:22-33](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L22-L33)
+- `enum efa_io_comp_status` → [efa_io_defs.h:35-68](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L35-L68)
+- `enum efa_io_frwr_pbl_mode` → [efa_io_defs.h:70-73](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L70-L73)
+- `struct efa_io_tx_meta_desc` → [efa_io_defs.h:75-130](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L75-L130)
+- `struct efa_io_tx_buf_desc` → [efa_io_defs.h:136-151](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L136-L151)
+- `struct efa_io_remote_mem_addr` → [efa_io_defs.h:153-165](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L153-L165)
+- `struct efa_io_rdma_req` → [efa_io_defs.h:167-173](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L167-L173)
+- `struct efa_io_fast_mr_reg_req` → [efa_io_defs.h:175-222](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L175-L222)
+- `struct efa_io_fast_mr_inv_req` → [efa_io_defs.h:224-230](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L224-L230)
+- `struct efa_io_tx_wqe` → [efa_io_defs.h:236-255](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L236-L255)
+- `struct efa_io_rx_desc` → [efa_io_defs.h:261-282](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L261-L282)
+- `struct efa_io_cdesc_common` → [efa_io_defs.h:285-308](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L285-L308)
+- `struct efa_io_tx_cdesc` → [efa_io_defs.h:311-317](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L311-L317)
+- `struct efa_io_rx_cdesc` → [efa_io_defs.h:320-334](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L320-L334)
+- `struct ib_srd_wr` → [efa_verbs.h:13-18](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L13-L18)
+- `struct ib_srd_rdma_wr` → [efa_verbs.h:20-24](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L20-L24)
+- `efa_inc_fast_reg_key_gen()` → [efa_verbs.h:41-47](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L41-47)
+- `EFA_QPT_SRD` → [efa_verbs.h:36](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L36)
+- `EFA_MR_GEN_SHIFT`, `EFA_MR_GEN_MASK` → [efa_verbs.h:38-39](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L38-L39)
+
+### srd-protocol.md ✅
+**Status**: 7 permalinks added (structs)
+**Key structs linked**:
+- `struct ib_srd_wr` → [efa_verbs.h:13-18](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L13-L18)
+- `struct ib_srd_rdma_wr` → [efa_verbs.h:20-24](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L20-L24)
+- `struct ibv_qp_init_attr` → [verbs.h:945-953](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L945-L953)
+- `struct ibv_ah_attr` → [verbs.h:788-796](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L788-L796)
+- `struct ibv_sge` → [verbs.h:1172-1176](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L1172-L1176)
+- `struct ibv_recv_wr` → [verbs.h:1233-1238](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L1233-L1238)
+- `struct ibv_wc` → [verbs.h:592-612](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L592-L612)
+
+### cuda-memory.md ✅
+**Status**: 4 permalinks added (functions/macros)
+**Key functions/macros linked**:
+- `nccl_net_ofi_gpu_init()` → [nccl_ofi_cuda.cpp:89-200](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L89-L200)
+- Function pointers: `pfn_cudaRuntimeGetVersion`, `pfn_cudaGetDriverEntryPointByVersion`, `pfn_cudaGetDriverEntryPoint` → [nccl_ofi_cuda.cpp:20-24](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L20-L24)
+- `DECLARE_CUDA_FUNCTION` macro → [nccl_ofi_cuda.cpp:40](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L40)
+- `RESOLVE_CUDA_FUNCTION` macro → [nccl_ofi_cuda.cpp:43-65](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L43-L65)
+
+### dmabuf-gpu-memory.md ✅
+**Status**: 2 permalinks added + comprehensive code references
+**Key structs linked**:
+- `struct dma_buf` → [linux/include/linux/dma-buf.h:294-400](https://github.com/torvalds/linux/blob/e84d960/include/linux/dma-buf.h#L294-L400)
+- `struct fi_mr_dmabuf` → [include/rdma/fi_domain.h:151-156](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L151-L156)
+
+### nccl-datapath.md ✅ **⭐ CRITICAL DOCUMENT ⭐**
+**Status**: Comprehensive code references with function permalinks
+**Functions referenced with permalinks**:
+- `ibv_post_send()` / `ibv_post_recv()` → [verbs.h:2554, 2562](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2554)
+- `ibv_poll_cq()` → [verbs.h:2576](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2576)
+- `fi_send()`, `fi_recv()`, `fi_write()` → [fi_msg.h](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h)
+- `fi_mr_reg()` → [fi_domain.h:413](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413)
+- Environment variables and configuration parameters documented
+- Cross-references to related docs for struct details
+
+### neuron-memory.md ✅
+**Status**: Code references section added for external APIs
+**External APIs documented**: AWS Neuron SDK (neuron_p2p_*) functions and structs
+
+### rocm-memory.md ✅
+**Status**: Code references section added for external APIs
+**External APIs documented**: AMD ROCm/HIP (hip*) functions
+
 ## Remaining Documents
 
 ### Documents reviewed - no new linkable content:
@@ -131,17 +200,28 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 ## Summary Statistics
 
 ### Completed
-- **Documents processed**: 18 / 23
+- **Documents processed**: 26 / 29 (90%)
   - 4 documents from session 1 (04, 05, 07, 08)
   - 6 documents from session 1 continuation (00, 01, 02, 03, 06, 09)
   - 3 documents from session 2 (10, 11, 13)
   - 5 documents reviewed in session 2 (12, 14, 19, 20, 22)
+  - 8 documents from session 3 (efa-hardware-architecture, srd-protocol, cuda-memory, dmabuf-gpu-memory, nccl-datapath, neuron-memory, rocm-memory, + reviewed docs)
 
 ### New Permalinks Added in Session 2
 - **rdma-core-and-verbs.md**: 15 permalinks
 - **kernel-efa-driver.md**: 8 permalinks
 - **efa-provider.md**: 4 permalinks
 - **Session 2 total**: 27 permalinks
+
+### New Permalinks Added in Session 3
+- **efa-hardware-architecture.md**: 21 permalinks
+- **srd-protocol.md**: 7 permalinks
+- **cuda-memory.md**: 4 permalinks
+- **dmabuf-gpu-memory.md**: 2 permalinks
+- **nccl-datapath.md**: 7 function permalinks + comprehensive references
+- **neuron-memory.md**: Code references (external APIs)
+- **rocm-memory.md**: Code references (external APIs)
+- **Session 3 total**: 41 permalinks + comprehensive code references
 
 ### Total Permalinks Added
 - **ofi-plugin.md**: 42 permalinks
@@ -152,7 +232,12 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 - **efa-provider.md**: 4 permalinks
 - **rdma-core-and-verbs.md**: 15 permalinks
 - **kernel-efa-driver.md**: 8 permalinks
-- **Grand Total**: 115 permalinks
+- **efa-hardware-architecture.md**: 21 permalinks
+- **srd-protocol.md**: 7 permalinks
+- **cuda-memory.md**: 4 permalinks
+- **dmabuf-gpu-memory.md**: 2 permalinks
+- **nccl-datapath.md**: 7 permalinks
+- **Grand Total**: 156 permalinks
 
 ### Unique Structs/Functions Linked
 - aws-ofi-nccl: ~15 unique structs/functions

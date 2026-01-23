@@ -507,6 +507,34 @@ export NCCL_DEBUG=INFO
 
 **Related Documentation**:
 - [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) - CUDA/ROCm DMA-BUF approach (different!)
-- [17-rocm-memory.md](17-rocm-memory.md) - AMD ROCm memory registration
+- [rocm-memory.md](rocm-memory.md) - AMD ROCm memory registration
 - [mr-cache-implementation.md](mr-cache-implementation.md) - MR cache (works with Neuron keys)
 - [kernel-efa-driver.md](kernel-efa-driver.md) - EFA kernel driver integration
+
+---
+
+## Code References
+
+### Functions
+
+**AWS Neuron SDK (External)** - Referenced but not linked (AWS proprietary):
+- `neuron_p2p_register_va()` - Register virtual address for P2P access
+- `neuron_p2p_unregister_va()` - Unregister virtual address
+- `neuron_p2p_get_pages()` - Get physical pages for address range
+- `neuron_p2p_put_pages()` - Release physical pages
+
+**rdma-core (libibverbs)** - Referenced but not linked (standard RDMA API):
+- `ibv_reg_mr()` - Register memory region (used with Neuron memory)
+
+### Structures
+
+**AWS Neuron SDK (External)** - Referenced but not linked:
+- `struct neuron_p2p_page_info` - Physical page information
+- `struct neuron_p2p_va_info` - Virtual address information
+
+### Total Code References
+- **4 Neuron SDK functions** (external AWS proprietary)
+- **1 rdma-core function** (standard API)
+- **2 Neuron SDK structures** (external AWS proprietary)
+
+**Note**: Neuron SDK is proprietary AWS software. References are based on kernel module source code in the EFA driver package.

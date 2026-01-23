@@ -57,14 +57,18 @@ The OFI plugin must work with **all CUDA versions** without recompilation.
 
 ### Solution: Dynamic Function Resolution
 
-From `aws-ofi-nccl/src/nccl_ofi_cuda.cpp`:
+**Function Pointers** ([nccl_ofi_cuda.cpp:20-24](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L20-L24)):
 
 ```cpp
 // Function pointers for version-agnostic calls
 static cudaError_t (*pfn_cudaRuntimeGetVersion)(int *runtimeVersion) = NULL;
 static cudaError_t (*pfn_cudaGetDriverEntryPointByVersion)(...) = NULL;  // CUDA 13+
 static cudaError_t (*pfn_cudaGetDriverEntryPoint)(...) = NULL;          // CUDA 12
+```
 
+**`DECLARE_CUDA_FUNCTION` macro** ([nccl_ofi_cuda.cpp:40](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L40)):
+
+```cpp
 // Driver API function pointers (version-stable!)
 DECLARE_CUDA_FUNCTION(cuDriverGetVersion, 2020);
 DECLARE_CUDA_FUNCTION(cuMemAlloc, 3020);
@@ -80,6 +84,8 @@ DECLARE_CUDA_FUNCTION(cuMemGetHandleForAddressRange, 11070);  // CUDA 11.7+
 ```
 
 ### Initialization Flow
+
+**`nccl_net_ofi_gpu_init()` function** ([nccl_ofi_cuda.cpp:89-143](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L89-L200)):
 
 ```cpp
 int nccl_net_ofi_gpu_init(void)
@@ -144,6 +150,8 @@ int nccl_net_ofi_gpu_init(void)
 ```
 
 ### Function Resolution Macro
+
+**`RESOLVE_CUDA_FUNCTION` macro** ([nccl_ofi_cuda.cpp:43-65](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L43-L65)):
 
 ```cpp
 #define RESOLVE_CUDA_FUNCTION(function, version) do {                          \
@@ -744,3 +752,56 @@ cd gdrcopy/tests
 - [rocm-memory.md](rocm-memory.md) - AMD ROCm (HIP API, no flush needed)
 - [mr-cache-implementation.md](mr-cache-implementation.md) - MR cache (critical for CUDA)
 - [kernel-efa-driver.md](kernel-efa-driver.md) - Kernel dmabuf import
+
+---
+
+## Code References
+
+### Functions
+
+**aws-ofi-nccl (CUDA integration)**:
+- `nccl_net_ofi_gpu_init()` ([nccl_ofi_cuda.cpp:89-200](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L89-L200))
+- Function pointers: `pfn_cudaRuntimeGetVersion`, `pfn_cudaGetDriverEntryPointByVersion`, `pfn_cudaGetDriverEntryPoint` ([nccl_ofi_cuda.cpp:20-24](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L20-L24))
+
+### Macros
+
+**aws-ofi-nccl (CUDA integration)**:
+- `DECLARE_CUDA_FUNCTION(function, version)` ([nccl_ofi_cuda.cpp:40](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L40))
+- `RESOLVE_CUDA_FUNCTION(function, version)` ([nccl_ofi_cuda.cpp:43-65](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L43-L65))
+- `LOAD_CUDA_RUNTIME_SYM(handle, sym)` ([nccl_ofi_cuda.cpp:67-72](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L67-L72))
+
+### CUDA Driver API Functions (External - NVIDIA)
+
+Referenced but not linked (standard NVIDIA CUDA Driver API):
+- `cuDriverGetVersion()` - Query CUDA driver version
+- `cuCtxGetDevice()` - Get current device
+- `cuDeviceGetAttribute()` - Query device attributes
+- `cuMemAlloc()`, `cuMemFree()`, `cuMemcpy()` - Memory management
+- `cuPointerGetAttributes()` - Query pointer attributes
+- `cuFlushGPUDirectRDMAWrites()` - GPUDirect flush (CUDA 11.3+)
+- `cuMemGetHandleForAddressRange()` - DMA-BUF export (CUDA 11.7+)
+
+### CUDA Runtime API Functions (External - NVIDIA)
+
+Referenced but not linked (standard NVIDIA CUDA Runtime API):
+- `cudaRuntimeGetVersion()` - Query runtime version
+- `cudaGetDriverEntryPoint()` - Legacy entry point resolver (CUDA 12)
+- `cudaGetDriverEntryPointByVersion()` - Versioned entry point resolver (CUDA 13+)
+- `cudaMalloc()`, `cudaMemcpy()` - Runtime memory operations
+
+### GDRCopy API Functions (External - NVIDIA GDRCopy)
+
+Referenced but not linked (GDRCopy library API):
+- `gdr_open()` - Open GDRCopy handle
+- `gdr_pin_buffer()`, `gdr_pin_buffer_v2()` - Pin GPU memory
+- `gdr_map()` - Map GPU memory to CPU address space
+- `gdr_copy_to_mapping()`, `gdr_copy_from_mapping()` - Fast CPU↔GPU copy
+
+### Total Code References
+- **1 function** from aws-ofi-nccl (nccl_net_ofi_gpu_init)
+- **3 macros** from aws-ofi-nccl (DECLARE_CUDA_FUNCTION, RESOLVE_CUDA_FUNCTION, LOAD_CUDA_RUNTIME_SYM)
+- **7 CUDA Driver API functions** (external NVIDIA)
+- **4 CUDA Runtime API functions** (external NVIDIA)
+- **5 GDRCopy API functions** (external NVIDIA)
+
+All aws-ofi-nccl references link to commit `75240c8` in the [aws/aws-ofi-nccl](https://github.com/aws/aws-ofi-nccl) repository.

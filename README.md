@@ -131,35 +131,6 @@ EFA Hardware (p4d: 4×100G, p5+: 32×100G EFAv3)
 5. **CPU Affinity** - Pin proxy threads to avoid NUMA remote access
 6. **Kernel Bypass** - Direct user-space access to hardware
 
-## Benchmarking
-
-### NCCL Tests
-
-```bash
-git clone https://github.com/NVIDIA/nccl-tests.git
-cd nccl-tests && make
-
-# All-reduce
-./build/all_reduce_perf -b 8 -e 1G -f 2 -g 8
-
-# All-gather
-./build/all_gather_perf -b 8 -e 1G -f 2 -g 8
-
-# Broadcast
-./build/broadcast_perf -b 8 -e 1G -f 2 -g 8
-```
-
-### Interpreting Results
-
-- **AlgBW**: Algorithm bandwidth (useful for comparison)
-- **BusBW**: Actual network bandwidth utilized
-- **Time**: Average latency per operation
-
-For AllReduce with Ring algorithm:
-```
-BusBW = AlgBW × 2 × (N-1) / N
-```
-
 ## Additional Resources
 
 ### Official Documentation

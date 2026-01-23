@@ -560,6 +560,32 @@ if (mem_type != hipMemoryTypeDevice) {
 
 **Related Documentation**:
 - [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) - DMA-BUF framework (used by ROCm)
-- [16-neuron-memory.md](16-neuron-memory.md) - AWS Neuron (different approach, no dmabuf)
+- [neuron-memory.md](neuron-memory.md) - AWS Neuron (different approach, no dmabuf)
 - [mr-cache-implementation.md](mr-cache-implementation.md) - MR cache (works with ROCm)
 - [kernel-efa-driver.md](kernel-efa-driver.md) - Kernel driver dmabuf import
+
+---
+
+## Code References
+
+### Functions
+
+**AMD ROCm/HIP API (External - AMD)** - Referenced but not linked:
+- `hipMalloc()` - Allocate GPU memory
+- `hipMemcpy()` - Copy memory (CPU ↔ GPU)
+- `hipMemGetHandleForAddressRange()` - Export GPU memory as dmabuf (ROCm 5.0+)
+- `hipGetDeviceProperties()` - Query device capabilities
+
+**rdma-core (libibverbs)** - Referenced but not linked (standard RDMA API):
+- `ibv_reg_dmabuf_mr()` - Register dmabuf as memory region (modern method)
+- `ibv_reg_mr()` - Register memory region (legacy method)
+
+**libfabric (OFI)** - Referenced but not linked (standard libfabric API):
+- `fi_mr_regattr()` - Register MR with dmabuf attribute
+
+### Total Code References
+- **4 ROCm/HIP functions** (external AMD)
+- **2 rdma-core functions** (standard API)
+- **1 libfabric function** (standard API)
+
+**Note**: ROCm/HIP is AMD's open-source GPU software stack. HIP API is designed to be CUDA-compatible for easy porting.

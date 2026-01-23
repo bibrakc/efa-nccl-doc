@@ -80,6 +80,8 @@ Benefits:
 
 ### Kernel-Side (Linux Kernel)
 
+**`struct dma_buf`** ([linux/include/linux/dma-buf.h:294-400](https://github.com/torvalds/linux/blob/e84d960/include/linux/dma-buf.h#L294-L400)):
+
 ```c
 // From linux/include/linux/dma-buf.h
 
@@ -137,6 +139,9 @@ struct scatterlist {
 ```c
 // From libfabric rdma/fi_domain.h
 
+**`struct fi_mr_dmabuf`** ([libfabric/include/rdma/fi_domain.h:151-156](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L151-L156)):
+
+```c
 /**
  * struct fi_mr_dmabuf - DMA-BUF memory region descriptor
  * Used with FI_MR_DMABUF flag
@@ -651,3 +656,45 @@ static int ib_umem_dmabuf_map_pages(struct ib_umem_dmabuf *umem)
 - [rdma-memreg.md](rdma-memreg.md) - General memory registration concepts
 - [rdma-core-and-verbs.md](rdma-core-and-verbs.md) - rdma-core API that dmabuf uses
 - [kernel-efa-driver.md](kernel-efa-driver.md) - Kernel driver dmabuf implementation
+
+---
+
+## Code References
+
+### Structures
+
+**Linux Kernel (DMA-BUF subsystem)**:
+- `struct dma_buf` ([linux/include/linux/dma-buf.h:294-400](https://github.com/torvalds/linux/blob/e84d960/include/linux/dma-buf.h#L294-L400))
+- `struct dma_buf_attachment` (referenced, defined in same file)
+- `struct sg_table` (referenced, defined in linux/include/linux/scatterlist.h)
+
+**libfabric (OFI)**:
+- `struct fi_mr_dmabuf` ([include/rdma/fi_domain.h:151-156](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L151-L156))
+
+### Functions
+
+**Linux Kernel (DMA-BUF API)** - Referenced but not linked (kernel API):
+- `dma_buf_get(int fd)` - Get dma_buf from file descriptor
+- `dma_buf_put(struct dma_buf *)` - Release dma_buf reference
+- `dma_buf_attach(struct dma_buf *, struct device *)` - Attach device to dmabuf
+- `dma_buf_detach(struct dma_buf *, struct dma_buf_attachment *)` - Detach device
+- `dma_buf_map_attachment(struct dma_buf_attachment *)` - Map attachment for DMA
+
+**rdma-core (libibverbs)** - Referenced but not linked (standard RDMA API):
+- `ibv_reg_dmabuf_mr()` - Register dmabuf as memory region
+
+**libfabric (OFI)** - Referenced but not linked (standard libfabric API):
+- `fi_mr_regattr(struct fid_domain *, struct fi_mr_attr *, flags, struct fid_mr **)` - Register MR with dmabuf
+
+**CUDA Driver API (External - NVIDIA)** - Referenced but not linked:
+- `cuMemGetHandleForAddressRange()` - Export CUDA memory as dmabuf (CUDA 11.7+)
+
+### Total Code References
+- **1 struct** from Linux kernel (dma_buf)
+- **1 struct** from libfabric (fi_mr_dmabuf)
+- **5 kernel functions** (DMA-BUF API, external)
+- **2 userspace functions** (rdma-core/libfabric, external)
+- **1 CUDA function** (external NVIDIA API)
+
+All Linux kernel references link to commit `e84d960` in the [torvalds/linux](https://github.com/torvalds/linux) repository.
+All libfabric references link to commit `6b9e629` in the [ofiwg/libfabric](https://github.com/ofiwg/libfabric) repository.

@@ -121,6 +121,8 @@ Proxy Thread (CPU):
 
 #### 5. OFI Plugin Send
 
+**`ncclNet_t`** interface ([net.h](https://github.com/NVIDIA/nccl/blob/master/src/include/net.h) - NCCL core, external):
+
 ```c
 // Proxy calls into OFI plugin
 ncclNet->isend(sendComm, data, size, tag, mhandle, &request);
@@ -129,7 +131,7 @@ ncclNet->isend(sendComm, data, size, tag, mhandle, &request);
 **Plugin Actions:**
 - Translate NCCL request to libfabric
 - Get memory handle (if not cached)
-- Post fi_send() or fi_write()
+- Post `fi_send()` or `fi_write()` ([libfabric fi_msg.h](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h))
 - Return request handle
 
 - **Timing**: ~1-3 μs (if memory registered)
@@ -153,6 +155,8 @@ fi_write(ep, buf, len, desc, dest_addr, remote_addr,
 - **Timing**: ~500-1000 ns
 
 #### 7. rdma-core (libibverbs)
+
+**`ibv_post_send()`** / **`ibv_post_recv()`** ([rdma-core verbs.h:2554, 2562](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2554)):
 
 ```c
 // Libfabric EFA provider calls verbs API
@@ -626,3 +630,87 @@ Subsequent Sends (cached):
 
 **Next Steps:**
 Understanding libfabric EFA provider specifics to optimize this data path further.
+
+**Related Documentation**:
+- [ofi-plugin.md](ofi-plugin.md) - OFI plugin implementation details
+- [libfabric-overview.md](libfabric-overview.md) - Libfabric API reference
+- [rdma-core-and-verbs.md](rdma-core-and-verbs.md) - rdma-core libibverbs API
+- [efa-hardware-architecture.md](efa-hardware-architecture.md) - EFA hardware queues and descriptors
+- [mr-cache-implementation.md](mr-cache-implementation.md) - Memory registration caching
+- [nccl-collectives.md](nccl-collectives.md) - NCCL collective algorithms
+
+---
+
+## Code References
+
+### Functions
+
+**NCCL Core (External - NVIDIA)** - Referenced but not linked:
+- `ncclAllReduce()` - AllReduce collective operation
+- `ncclNet->isend()` - Non-blocking send via network plugin
+- `ncclNet->irecv()` - Non-blocking receive via network plugin
+- `ncclNet->regMr()` - Register memory region for RDMA
+- `ncclNet->deregMr()` - Deregister memory region
+- `ncclNet->iflush()` - Flush operation for GPUDirect
+
+**libfabric (OFI)** - Referenced but not linked (standard libfabric API):
+- `fi_send()` - Send message ([fi_msg.h](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h))
+- `fi_recv()` - Receive message
+- `fi_write()` - RDMA write
+- `fi_mr_reg()` - Register memory region ([fi_domain.h:413](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413))
+- `fi_cq_read()` - Read completion queue ([fi_eq.h](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h))
+
+**rdma-core (libibverbs)** - Referenced but not linked (standard RDMA API):
+- `ibv_post_send()` - Post send work request ([verbs.h:2554](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2554))
+- `ibv_post_recv()` - Post receive work request ([verbs.h:2562](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2562))
+- `ibv_poll_cq()` - Poll completion queue ([verbs.h:2576](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2576))
+
+### Structures
+
+**NCCL Core (External - NVIDIA)** - Referenced but not linked:
+- `ncclNet_t` - Network plugin interface ([net.h](https://github.com/NVIDIA/nccl/blob/master/src/include/net.h))
+- `ncclDataType_t` - Data type enumeration
+- `ncclRedOp_t` - Reduction operation enumeration
+
+**libfabric (OFI)** - See libfabric-overview.md for detailed struct permalinks:
+- `struct fid_ep` - Endpoint handle
+- `struct fid_cq` - Completion queue handle
+- `struct fid_mr` - Memory region handle
+
+**rdma-core (libibverbs)** - See rdma-core-and-verbs.md for detailed struct permalinks:
+- `struct ibv_qp` - Queue pair
+- `struct ibv_cq` - Completion queue
+- `struct ibv_send_wr` - Send work request
+- `struct ibv_recv_wr` - Receive work request
+- `struct ibv_wc` - Work completion
+
+### Configuration Parameters
+
+**NCCL Environment Variables**:
+- `NCCL_ALGO` - Force specific algorithm (Ring, Tree, etc.)
+- `NCCL_PROTO` - Force specific protocol (Simple, LL, LL128)
+- `NCCL_NCHANNELS` - Number of channels (default: auto-detected)
+- `NCCL_BUFFSIZE` - Channel buffer size (default: 4 MB)
+- `NCCL_NET_GDR_LEVEL` - GPUDirect level (0-5)
+- `NCCL_IB_GID_INDEX` - GID index for RDMA
+- `NCCL_DEBUG` - Debug verbosity (WARN, INFO, TRACE)
+
+**OFI Plugin Environment Variables**:
+- `OFI_NCCL_CUDA_FLUSH_ENABLE` - Enable CUDA GPUDirect flush
+- `FI_EFA_USE_DEVICE_RDMA` - Enable native RDMA on EFA Gen3+
+
+### Total Code References
+- **6 NCCL functions** (external NVIDIA)
+- **5 libfabric functions** (standard OFI API)
+- **3 rdma-core functions** (standard verbs API)
+- **3 NCCL structures** (external NVIDIA)
+- **3 libfabric structures** (see libfabric-overview.md)
+- **4 rdma-core structures** (see rdma-core-and-verbs.md)
+- **7 NCCL environment variables**
+- **2 OFI plugin environment variables**
+
+**Cross-References**:
+- For libfabric struct details: [libfabric-overview.md](libfabric-overview.md)
+- For rdma-core struct details: [rdma-core-and-verbs.md](rdma-core-and-verbs.md)
+- For EFA hardware descriptors: [efa-hardware-architecture.md](efa-hardware-architecture.md)
+- For OFI plugin implementation: [ofi-plugin.md](ofi-plugin.md)

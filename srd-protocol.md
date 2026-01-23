@@ -82,6 +82,9 @@ From [amzn-drivers/kernel/linux/efa/SRD.txt](https://github.com/amzn/amzn-driver
 - Operations: Send only (RDMA operations possible in future)
 
 **Work Request Format**:
+
+**`struct ib_srd_wr`** ([efa_verbs.h:13-18](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L13-L18)):
+
 ```c
 struct ib_srd_wr {
 	struct ib_send_wr wr;
@@ -366,7 +369,9 @@ From AWS research and measurements:
 
 ### Creating SRD Queue Pair
 
-Using libibverbs/rdma-core API:
+Using libibverbs/rdma-core API.
+
+**`struct ibv_qp_init_attr`** ([verbs.h:945-953](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L945-L953)):
 
 ```c
 struct ibv_qp_init_attr qp_attr = {
@@ -389,6 +394,8 @@ struct ibv_qp *qp = ibv_create_qp(pd, &qp_attr);
 
 ### Posting Send Request
 
+**`struct ibv_ah_attr`** ([verbs.h:788-796](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L788-L796)):
+
 ```c
 // Create Address Handle for destination
 struct ibv_ah_attr ah_attr = {
@@ -405,7 +412,11 @@ struct ibv_ah_attr ah_attr = {
 	},
 };
 struct ibv_ah *ah = ibv_create_ah(pd, &ah_attr);
+```
 
+**`struct ib_srd_wr`** (already linked above):
+
+```c
 // Post send work request
 struct ib_srd_wr wr = {
 	.wr = {
@@ -430,6 +441,8 @@ ibv_post_send(qp, (struct ibv_send_wr *)&wr, &bad_wr);
 
 ### Receiving Messages
 
+**`struct ibv_sge`** ([verbs.h:1172-1176](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L1172-L1176)):
+
 ```c
 // Post receive buffers (same as UD)
 struct ibv_sge sge = {
@@ -437,7 +450,11 @@ struct ibv_sge sge = {
 	.length = buffer_size,
 	.lkey = mr->lkey,
 };
+```
 
+**`struct ibv_recv_wr`** ([verbs.h:1233-1238](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L1233-L1238)):
+
+```c
 struct ibv_recv_wr wr = {
 	.wr_id = request_id,
 	.sg_list = &sge,
@@ -445,7 +462,11 @@ struct ibv_recv_wr wr = {
 };
 
 ibv_post_recv(qp, &wr, &bad_wr);
+```
 
+**`struct ibv_wc`** ([verbs.h:592-612](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L592-L612)):
+
+```c
 // Poll completion queue
 struct ibv_wc wc;
 int n = ibv_poll_cq(recv_cq, 1, &wc);
@@ -637,3 +658,51 @@ NCCL → OFI Plugin → Libfabric → EFA Provider → SRD QPs
 1. L. Shalev et al., "A Cloud-Optimized Transport Protocol for Elastic and Scalable HPC," IEEE Micro, vol. 40, no. 6, 2020
 2. AWS EFA Documentation: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa.html
 3. SRD Protocol Specification: https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/SRD.txt
+
+---
+
+## Code References
+
+### Structures
+
+**amzn-drivers (EFA Kernel Driver)**:
+- `struct ib_srd_wr` ([efa_verbs.h:13-18](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L13-L18))
+- `struct ib_srd_rdma_wr` ([efa_verbs.h:20-24](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L20-L24))
+
+**rdma-core (libibverbs)**:
+- `struct ibv_qp_init_attr` ([verbs.h:945-953](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L945-L953))
+- `struct ibv_ah_attr` ([verbs.h:788-796](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L788-L796))
+- `struct ibv_sge` ([verbs.h:1172-1176](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L1172-L1176))
+- `struct ibv_recv_wr` ([verbs.h:1233-1238](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L1233-L1238))
+- `struct ibv_wc` ([verbs.h:592-612](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L592-L612))
+
+### Functions
+
+**rdma-core (libibverbs)** - Referenced but not linked (standard RDMA verbs API):
+- `ibv_create_qp()` - Create Queue Pair
+- `ibv_create_ah()` - Create Address Handle
+- `ibv_post_send()` - Post send work request
+- `ibv_post_recv()` - Post receive work request
+- `ibv_poll_cq()` - Poll completion queue
+
+**libfabric (OFI)** - Referenced but not linked (standard libfabric API):
+- `fi_endpoint()` - Create endpoint
+- `fi_send()`, `fi_recv()` - Send/receive operations
+- `fi_av_insert()` - Insert address into address vector
+- `fi_getinfo()` - Query fabric information
+
+### Constants/Defines
+
+**amzn-drivers (EFA Kernel Driver)**:
+- `EFA_QPT_SRD` ([efa_verbs.h:36](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L36))
+- `EFA_IO_SEND`, `EFA_IO_RDMA_READ`, `EFA_IO_RDMA_WRITE` (referenced from [efa_io_defs.h](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h))
+
+### Total Code References
+- **2 structures** from amzn-drivers
+- **5 structures** from rdma-core/libibverbs
+- **5 libibverbs functions** (standard API, not directly linked)
+- **4 libfabric functions** (standard API, not directly linked)
+- **1+ constants** from amzn-drivers
+
+All amzn-drivers references link to commit `8a8b6f2` in the [amzn/amzn-drivers](https://github.com/amzn/amzn-drivers) repository.
+All rdma-core references link to commit `6e9643e` in the [linux-rdma/rdma-core](https://github.com/linux-rdma/rdma-core) repository.
