@@ -326,3 +326,81 @@ NCCL provides:
 - Extensive tuning knobs for optimization
 
 The OFI plugin integrates into this architecture through the `ncclNet_t` interface, translating NCCL's network requirements into libfabric operations.
+
+**Related Documentation**:
+- [nccl-datapath.md](nccl-datapath.md) - Detailed data flow from GPU to GPU
+- [nccl-collectives.md](nccl-collectives.md) - Collective algorithms (AllReduce, etc.)
+- [ofi-plugin.md](ofi-plugin.md) - OFI plugin implementation of ncclNet_t
+- [topology-and-binding.md](topology-and-binding.md) - Topology detection details
+
+---
+
+## Code References
+
+### Structures
+
+**NCCL Core (External - NVIDIA)** - Referenced but not linked (NCCL internals):
+- `ncclComm_t` - Communicator handle (opaque structure)
+- `ncclNet_t` - Network plugin interface ([net.h](https://github.com/NVIDIA/nccl/blob/master/src/include/net.h))
+- `ncclNetProperties_t` - Network device properties
+- `ncclResult_t` - Return code enumeration
+
+### Functions
+
+**NCCL Core API (External - NVIDIA)** - Referenced but not linked:
+- `ncclCommInitRank()` - Initialize communicator with rank
+- `ncclAllReduce()` - AllReduce collective operation
+- `ncclSend()` / `ncclRecv()` - Point-to-point operations
+- `ncclGroupStart()` / `ncclGroupEnd()` - Group call batching
+- `ncclGetErrorString()` - Get error description
+- `ncclCommGetAsyncError()` - Check for async errors
+
+**ncclNet_t Interface Functions** - Plugin implementation required:
+- `init()` - Initialize plugin
+- `devices()` - Get device count
+- `getProperties()` - Query device properties
+- `listen()` - Create listening endpoint
+- `connect()` - Connect to remote endpoint
+- `accept()` - Accept incoming connection
+- `regMr()` - Register memory region
+- `deregMr()` - Deregister memory region
+- `isend()` - Non-blocking send
+- `irecv()` - Non-blocking receive
+- `iflush()` - Flush operation (GPUDirect)
+- `test()` - Test for completion
+- `close()` - Close connection
+
+### Environment Variables
+
+**NCCL Configuration**:
+- `NCCL_NCHANNELS` - Number of channels (default: auto)
+- `NCCL_ALGO` - Algorithm selection (Ring, Tree, CollNet)
+- `NCCL_PROTO` - Protocol selection (Simple, LL, LL128)
+- `NCCL_DEBUG` - Debug level (WARN, INFO, TRACE)
+- `NCCL_DEBUG_SUBSYS` - Debug subsystems
+- `NCCL_BUFFSIZE` - Channel buffer size (default: 4 MB)
+- `NCCL_P2P_LEVEL` - P2P connection level (NVL, PIX, PHB, etc.)
+- `NCCL_NET_GDR_LEVEL` - GPUDirect level (0-5)
+- `NCCL_SOCKET_IFNAME` - Network interface name
+- `NCCL_IB_HCA` - InfiniBand HCA name
+- `NCCL_TOPO_FILE` - Custom topology XML file
+- `NCCL_GRAPH_FILE` - Custom graph XML file
+
+### Error Codes
+
+**ncclResult_t values**:
+- `ncclSuccess` - Operation succeeded
+- `ncclInvalidArgument` - Invalid argument
+- `ncclInvalidUsage` - API misuse
+- `ncclSystemError` - System error
+- `ncclInternalError` - Internal NCCL error
+- `ncclRemoteError` - Remote rank error
+
+### Total Code References
+- **4 NCCL structures** (external NVIDIA)
+- **6 NCCL API functions** (external NVIDIA)
+- **13 ncclNet_t interface functions** (plugin must implement)
+- **12 environment variables**
+- **6 error codes**
+
+**Note**: NCCL core is proprietary NVIDIA software. The ncclNet_t interface is the public API that network plugins (like aws-ofi-nccl) must implement. For OFI plugin implementation details, see [ofi-plugin.md](ofi-plugin.md).

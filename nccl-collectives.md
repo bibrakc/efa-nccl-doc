@@ -480,3 +480,71 @@ Time = Latency * 2 * log2(N) + (2 * Size) / (BandwidthPerLink * TreeWidth)
 - AllReduce with Ring algorithm for gradient aggregation
 - LL128 or Simple protocol depending on model size
 - 4-8 channels per GPU
+
+**Related Documentation**:
+- [algorithms/ring-algorithm.md](algorithms/ring-algorithm.md) - Ring algorithm details
+- [algorithms/tree-algorithm.md](algorithms/tree-algorithm.md) - Tree algorithm details
+- [nccl-core.md](nccl-core.md) - NCCL core concepts
+- [nccl-datapath.md](nccl-datapath.md) - Data flow details
+
+---
+
+## Code References
+
+### Functions
+
+**NCCL Collective API (External - NVIDIA)** - Referenced but not linked:
+- `ncclAllReduce()` - Reduce and broadcast result to all ranks
+- `ncclBroadcast()` - Send data from one rank to all others
+- `ncclReduce()` - Reduce to single rank
+- `ncclAllGather()` - Gather data from all ranks to all ranks
+- `ncclReduceScatter()` - Reduce and scatter chunks to ranks
+- `ncclSend()` / `ncclRecv()` - Point-to-point send/receive
+
+### Enumerations
+
+**NCCL Data Types (ncclDataType_t)**:
+- `ncclInt8`, `ncclUint8` - 8-bit integers
+- `ncclInt32`, `ncclUint32` - 32-bit integers
+- `ncclInt64`, `ncclUint64` - 64-bit integers
+- `ncclFloat16`, `ncclFloat32`, `ncclFloat64` - Floating point
+- `ncclBfloat16` - Brain floating point
+
+**NCCL Reduction Operations (ncclRedOp_t)**:
+- `ncclSum` - Sum reduction
+- `ncclProd` - Product reduction
+- `ncclMax` - Maximum reduction
+- `ncclMin` - Minimum reduction
+- `ncclAvg` - Average reduction (NCCL 2.10+)
+
+### Algorithms
+
+**Algorithm Types**:
+- **Ring** - Bandwidth-optimal, O(N) latency
+- **Tree** - Latency-optimal, O(log N) latency
+- **CollNet** - Switch-assisted collectives (IB SHARP)
+- **NVLS** - NVLink SHARP (H100+)
+
+### Protocols
+
+**Protocol Types**:
+- **Simple** - Standard protocol, best for large messages (>128 KB)
+- **LL (Low Latency)** - Flag-based, best for small messages (<4 KB)
+- **LL128** - 128-byte granularity, good for medium messages (4-128 KB)
+
+### Environment Variables
+
+**Algorithm/Protocol Selection**:
+- `NCCL_ALGO` - Force algorithm (Ring, Tree, CollNet, NVLS)
+- `NCCL_PROTO` - Force protocol (Simple, LL, LL128)
+- `NCCL_MIN_NCHANNELS` / `NCCL_MAX_NCHANNELS` - Channel count limits
+
+### Total Code References
+- **6 collective functions** (external NVIDIA)
+- **10 data types** (ncclDataType_t)
+- **5 reduction operations** (ncclRedOp_t)
+- **4 algorithm types**
+- **3 protocol types**
+- **3 environment variables**
+
+**Note**: NCCL collectives are part of NVIDIA's NCCL library. For algorithm implementation details, see the [algorithms/](algorithms/) directory.
