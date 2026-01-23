@@ -98,6 +98,9 @@ fi_domain(fabric, info, &domain, NULL);
 - Address vector creation
 
 **Domain Attributes:**
+
+**`struct fi_domain_attr`** - Domain attributes ([fabric.h:226-244](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L226-L244)):
+
 ```c
 struct fi_domain_attr {
   struct fid_domain *domain;

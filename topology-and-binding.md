@@ -233,6 +233,8 @@ NCCL Topology Building:
 
 ### PCI Topology Parsing
 
+**`struct pci_location`** - PCI device location (internal helper structure for topology parsing):
+
 ```c
 struct pci_location {
   uint16_t domain;

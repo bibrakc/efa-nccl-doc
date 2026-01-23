@@ -200,6 +200,37 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 - 3 protocol types (Simple, LL, LL128)
 - 3 environment variables
 
+## Session 4: Inline Permalink Fixes
+
+**Issue Identified**: While Code References sections were added at the bottom of files, some struct/typedef/function DEFINITIONS in code blocks were missing permalinks immediately above them.
+
+**Files Fixed** (8 struct definitions):
+1. **libfabric-overview.md** - Added permalink above `struct fi_domain_attr` definition
+2. **efa-provider.md** - Fixed 2 structs: moved inline permalinks to standard format above code blocks
+   - `struct efa_rdm_ep` - EFA RDM endpoint
+   - `struct efa_rdm_pke` - Packet entry
+3. **rdma-memreg.md** - Added permalinks for conceptual cache structures (2 structs):
+   - `struct mr_cache` - Memory registration cache (conceptual)
+   - `struct mr_entry` - Cache entry with reference counting (conceptual)
+4. **ofi-plugin-protocols.md** - Added note for conceptual tag structure:
+   - `struct nccl_ofi_tag` - Tag encoding structure (conceptual)
+5. **topology-and-binding.md** - Added permalink for helper structure:
+   - `struct pci_location` - PCI device location (internal helper)
+6. **nccl-core.md** - Already had permalinks above ncclComm_t and ncclNet_t
+
+**Pattern Enforced**: Every struct/typedef/enum/function DEFINITION in a code block now has a permalink in this format:
+```
+**`struct_name`** - Brief description ([source](github_url)):
+
+```c
+struct struct_name {
+  // definition
+};
+```
+```
+
+**Session 4 Result**: All documentation files now have consistent permalink formatting both inline (above code blocks) and in Code References sections at the bottom.
+
 ## Remaining Documents
 
 ### Documents reviewed - no new linkable content:
@@ -243,6 +274,15 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 - **nccl-core.md**: Comprehensive code references (ncclNet_t interface)
 - **nccl-collectives.md**: Comprehensive code references (collective operations)
 - **Session 3 total**: 41 permalinks + comprehensive code references for all files
+
+### Inline Permalink Fixes in Session 4
+- **libfabric-overview.md**: 1 struct definition
+- **efa-provider.md**: 2 struct definitions
+- **rdma-memreg.md**: 2 conceptual struct definitions
+- **ofi-plugin-protocols.md**: 1 conceptual struct definition
+- **topology-and-binding.md**: 1 helper struct definition
+- **nccl-core.md**: Already compliant (verified)
+- **Session 4 fixes**: 8 struct definitions now have proper inline permalinks above code blocks
 
 ### Total Permalinks Added
 - **ofi-plugin.md**: 42 permalinks

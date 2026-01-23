@@ -367,6 +367,8 @@ With cache:
 
 ### Cache Structure
 
+**`struct mr_cache`** - Memory registration cache (conceptual structure showing cache organization):
+
 ```c
 struct mr_cache {
   // Hash table or tree
@@ -505,6 +507,8 @@ FI_MR_CACHE_MONITOR=userfaultfd
 ```
 
 #### Reference Counting
+
+**`struct mr_entry`** - Cache entry with reference counting (conceptual):
 
 ```c
 struct mr_entry {

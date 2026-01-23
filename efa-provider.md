@@ -161,8 +161,10 @@ caps = FI_MSG           // Message operations
 
 #### EFA Endpoint
 
+**`struct efa_rdm_ep`** - EFA RDM endpoint ([prov/efa/src/rdm/efa_rdm_ep.h:46-120](https://github.com/ofiwg/libfabric/blob/6b9e629/prov/efa/src/rdm/efa_rdm_ep.h#L46-L120)):
+
 ```c
-struct efa_rdm_ep {  // ([prov/efa/src/rdm/efa_rdm_ep.h:46-120](https://github.com/ofiwg/libfabric/blob/6b9e629/prov/efa/src/rdm/efa_rdm_ep.h#L46-L120))
+struct efa_rdm_ep {
   struct fid_ep ep_fid;
 
   // Core EFA resources
@@ -191,8 +193,10 @@ struct efa_rdm_ep {  // ([prov/efa/src/rdm/efa_rdm_ep.h:46-120](https://github.c
 
 #### Packet Entry
 
+**`struct efa_rdm_pke`** - Packet entry ([prov/efa/src/rdm/efa_rdm_pke.h:78-100](https://github.com/ofiwg/libfabric/blob/6b9e629/prov/efa/src/rdm/efa_rdm_pke.h#L78-L100)):
+
 ```c
-struct efa_rdm_pke {  // ([prov/efa/src/rdm/efa_rdm_pke.h:78-100](https://github.com/ofiwg/libfabric/blob/6b9e629/prov/efa/src/rdm/efa_rdm_pke.h#L78-L100))
+struct efa_rdm_pke {
   struct dlist_entry entry;
   void *payload;                   // Packet payload
   size_t payload_size;

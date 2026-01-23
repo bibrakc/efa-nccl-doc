@@ -66,6 +66,7 @@ ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
   ret = fi_getname(&comm->ep->fid, &local_addr, &addrlen);
 
   // 6. Serialize address into handle (for NCCL to send to peer)
+  // struct nccl_ofi_handle - conceptual structure for handle serialization
   struct nccl_ofi_handle {
     char ep_addr[MAX_EP_ADDR_LEN];
     size_t ep_addr_len;
@@ -246,6 +247,8 @@ The OFI plugin uses **tagged messages** to multiplex multiple NCCL channels over
 **Tag Structure** (plugin-specific, example):
 
 (Note: The actual tag structure may vary by protocol implementation in aws-ofi-nccl)
+
+**`struct nccl_ofi_tag`** - Tag encoding structure (conceptual example showing 64-bit tag layout):
 
 ```c
 // Tag encoding (64-bit)

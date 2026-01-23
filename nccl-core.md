@@ -55,7 +55,7 @@ Node 1                          Node 2
 
 ### Communicator
 
-The `ncclComm_t` is the central object in NCCL:
+**`ncclComm_t`** - Communicator handle ([NCCL nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h) - NCCL core, opaque structure):
 
 ```c
 ncclComm_t comm;
@@ -196,6 +196,8 @@ NCCL has a pluggable transport layer:
 
 ### Net Plugin Interface
 
+**`ncclNet_t`** - Network plugin interface ([NCCL net.h](https://github.com/NVIDIA/nccl/blob/master/src/include/net.h)):
+
 ```c
 typedef struct {
   ncclResult_t (*init)(ncclDebugLogger_t logFunction);
@@ -219,7 +221,7 @@ typedef struct {
 } ncclNet_t;
 ```
 
-**OFI Plugin implements this interface using libfabric**
+**OFI Plugin implements this interface using libfabric** - See [ofi-plugin.md](ofi-plugin.md) for implementation details.
 
 ## Configuration and Tuning
 
