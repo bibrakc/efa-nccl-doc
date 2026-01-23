@@ -57,118 +57,279 @@ Source GPU                                    Destination GPU
 
 #### 1. Application Issues Collective
 
+**NCCL API** ([nccl/src/include/nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h)):
+
 ```c
 // User code
 ncclAllReduce(sendbuff, recvbuff, count, ncclFloat,
               ncclSum, comm, stream);
 ```
 
+**Implementation** ([nccl/src/collectives.cc](https://github.com/NVIDIA/nccl/blob/master/src/collectives.cc)):
+- Validates communicator and parameters
+- Enqueues operation to CUDA stream
+- Returns immediately (non-blocking)
+
 - **Action**: Enqueue to CUDA stream
 - **Timing**: ~1-2 μs (software overhead)
 
 #### 2. NCCL Planning
 
+**Scheduler** ([nccl/src/enqueue.cc](https://github.com/NVIDIA/nccl/blob/master/src/enqueue.cc)):
+
+```c
+// NCCL internal planning (simplified)
+ncclResult_t ncclEnqueueCheck(struct ncclInfo* info) {
+  // Determine algorithm based on size and topology
+  NCCLCHECK(selectAlgorithm(info, &algo));
+
+  // Select protocol based on message size
+  NCCLCHECK(selectProtocol(info, &proto));
+
+  // Break into chunks and assign to channels
+  NCCLCHECK(computeCollChunking(info));
+
+  return ncclSuccess;
+}
 ```
-Tasks:
-- Determine algorithm (Ring/Tree)
-- Select protocol (Simple/LL/LL128)
-- Break data into chunks
-- Assign chunks to channels
-- Build operation graph
-```
+
+**Tasks**:
+- Determine algorithm (Ring/Tree) based on message size and topology
+- Select protocol (Simple/LL/LL128) from tuner or heuristics
+- Break data into chunks for parallel processing
+- Assign chunks to channels (typically 2-16 channels)
+- Build operation graph for GPU kernels
+
+**Key Functions**:
+- `ncclEnqueueCheck()` - Main scheduling entry point
+- `selectAlgorithm()` - Algorithm selection logic
+- `selectProtocol()` - Protocol selection (may call tuner)
 
 - **Action**: Create work items for each channel
 - **Timing**: < 1 μs (usually cached)
 
 #### 3. CUDA Kernel Launch
 
+**NCCL Device Code** ([nccl/src/device/](https://github.com/NVIDIA/nccl/tree/master/src/device)):
+
+```cuda
+// Simplified NCCL kernel launch (from src/enqueue.cc)
+for (int c = 0; c < comm->nChannels; c++) {
+  if (channelHasWork[c]) {
+    // Launch kernel with work descriptor
+    ncclKernel<<<blocks, threads, 0, stream>>>(
+      comm->devComm, channel[c].workFifo
+    );
+  }
+}
 ```
-For each channel:
-  Launch NCCL kernel on GPU
-```
+
+**Kernel Implementation** ([nccl/src/device/common_kernel.h](https://github.com/NVIDIA/nccl/blob/master/src/device/common_kernel.h)):
 
 **Kernel Responsibilities:**
 - Read data from source GPU memory
-- Perform local reduction if needed
-- Write to proxy buffers
-- Signal proxy thread
+- Perform local reduction if needed (for AllReduce)
+- Write to network proxy buffers or directly to NIC
+- Signal proxy thread via memory fence
+- Coordinate with other GPU threads using primitives
+
+**Key Device Functions**:
+- `ncclKernel()` - Main device kernel entry point
+- `runRing()` / `runTree()` - Algorithm-specific device code
+- `prims.send()` / `prims.recv()` - Low-level data movement primitives
 
 - **Timing**: ~5-10 μs (kernel launch latency)
 
 #### 4. Proxy Thread Activation
 
-NCCL uses proxy threads for network communication:
+**Proxy Service** ([nccl/src/proxy.cc](https://github.com/NVIDIA/nccl/blob/master/src/proxy.cc)):
 
-```
-Proxy Thread (CPU):
-  while (active) {
-    poll for work from GPU
-    if (work available) {
-      issue network send/recv
-      poll for completion
-      signal GPU
+```c
+// Simplified proxy thread main loop
+void* ncclProxyService(void* _args) {
+  struct ncclProxyArgs* args = _args;
+
+  while (!args->stop) {
+    // Poll for work from GPU via shared memory
+    ncclProxyOp* op = ncclProxyGetNextOp(args);
+
+    if (op) {
+      // Process operation through network plugin
+      if (op->type == ncclProxyOpSend) {
+        ncclNetSend(op);
+      } else if (op->type == ncclProxyOpRecv) {
+        ncclNetRecv(op);
+      }
+
+      // Poll for completion
+      ncclNetTest(op->request, &done);
+
+      // Signal GPU when complete
+      ncclProxySignalGpu(op);
     }
   }
+}
 ```
 
+**Key Functions**:
+- `ncclProxyService()` - Main proxy thread loop ([src/proxy.cc](https://github.com/NVIDIA/nccl/blob/master/src/proxy.cc))
+- `ncclProxyGetNextOp()` - Dequeue work from GPU shared memory
+- `ncclNetSend()` / `ncclNetRecv()` - Call into ncclNet plugin
+- `ncclNetTest()` - Poll for network completion
+
 **Why Proxy Threads:**
-- Network operations are CPU-driven
-- GPU focuses on compute
-- Enables async progress
-- CPU can manage complex protocols
+- Network operations are CPU-driven (EFA requires CPU polling)
+- GPU focuses on compute and local data movement
+- Enables async progress independent of GPU kernels
+- CPU can manage complex protocols and error handling
 
 - **Timing**: Wakeup ~1-2 μs
 
 #### 5. OFI Plugin Send
 
-**`ncclNet_t`** interface ([net.h](https://github.com/NVIDIA/nccl/blob/master/src/include/net.h) - NCCL core, external):
+**`ncclNet_t`** interface ([nccl/src/include/net.h](https://github.com/NVIDIA/nccl/blob/master/src/include/net.h)):
 
 ```c
-// Proxy calls into OFI plugin
+// Proxy calls into OFI plugin via ncclNet_t interface
 ncclNet->isend(sendComm, data, size, tag, mhandle, &request);
 ```
 
-**Plugin Actions:**
-- Translate NCCL request to libfabric
-- Get memory handle (if not cached)
-- Post `fi_send()` or `fi_write()` ([libfabric fi_msg.h](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h))
-- Return request handle
+**OFI Plugin Implementation** ([aws-ofi-nccl/src/nccl_ofi_net.c](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_net.c)):
+
+```c
+// aws-ofi-nccl send implementation
+ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data, int size,
+                                int tag, void* mhandle, void** request) {
+  nccl_net_ofi_send_comm_t* s_comm = (nccl_net_ofi_send_comm_t*)sendComm;
+  nccl_net_ofi_mr_handle_t* mr_handle = (nccl_net_ofi_mr_handle_t*)mhandle;
+
+  // Get libfabric memory descriptor
+  void* desc = fi_mr_desc(mr_handle->mr);
+
+  // Post send using libfabric
+  ret = fi_send(s_comm->local_ep, data, size, desc,
+                s_comm->remote_addr, tag);
+
+  return ncclSuccess;
+}
+```
+
+**Plugin Actions**:
+- Translate NCCL request to libfabric operation
+- Get memory registration handle from MR cache
+- Extract libfabric memory descriptor (`fi_mr_desc()`)
+- Post `fi_send()` or `fi_write()` to libfabric endpoint
+- Return request handle for polling
+
+**Key Files**:
+- [nccl_ofi_net.c](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_net.c) - Main ncclNet implementation
+- [nccl_ofi_sendrecv.c](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_sendrecv.c) - Send/recv path
+- [nccl_ofi_mr.c](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_mr.c) - Memory registration cache
 
 - **Timing**: ~1-3 μs (if memory registered)
 
 #### 6. Libfabric Processing
 
+**Libfabric API** ([libfabric/include/rdma/fi_msg.h](https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_msg.h)):
+
 ```c
-// Inside OFI plugin
+// Inside OFI plugin - libfabric send operation
 fi_send(ep, buf, len, desc, dest_addr, context);
-// or
+// or for RDMA write
 fi_write(ep, buf, len, desc, dest_addr, remote_addr,
          remote_key, context);
 ```
 
-**Libfabric Actions:**
-- Validate endpoint
-- Prepare EFA-specific headers
-- Queue work request
-- Call rdma-core verbs
+**EFA Provider Implementation** ([libfabric/prov/efa/src/efa_msg.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_msg.c)):
+
+```c
+// EFA provider fi_send implementation
+static ssize_t efa_msg_send(struct fid_ep *ep, const void *buf,
+                            size_t len, void *desc, fi_addr_t dest_addr,
+                            void *context) {
+  struct efa_ep *efa_ep = container_of(ep, struct efa_ep, ep_fid);
+
+  // Prepare send work request
+  struct ibv_send_wr wr = {
+    .wr_id = (uintptr_t)context,
+    .sg_list = &sge,
+    .num_sge = 1,
+    .opcode = IBV_WR_SEND,
+  };
+
+  // Post to rdma-core verbs
+  ret = ibv_post_send(efa_ep->qp->ibv_qp, &wr, &bad_wr);
+
+  return ret ? -errno : 0;
+}
+```
+
+**Libfabric Actions**:
+- Validate endpoint and parameters
+- Prepare EFA-specific headers (SRD addressing)
+- Build scatter-gather list from buffer descriptors
+- Call rdma-core `ibv_post_send()` with work request
+
+**Key Files**:
+- [prov/efa/src/efa_msg.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_msg.c) - EFA send/recv operations
+- [prov/efa/src/efa_rma.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_rma.c) - EFA RDMA write operations
+- [prov/efa/src/efa_verbs.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_verbs.c) - Verbs integration
 
 - **Timing**: ~500-1000 ns
 
 #### 7. rdma-core (libibverbs)
 
-**`ibv_post_send()`** / **`ibv_post_recv()`** ([rdma-core verbs.h:2554, 2562](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2554)):
+**Verbs API** ([rdma-core/libibverbs/verbs.h](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h)):
 
 ```c
 // Libfabric EFA provider calls verbs API
-ibv_post_send(qp, &wr, &bad_wr);
+int ibv_post_send(struct ibv_qp *qp, struct ibv_send_wr *wr,
+                  struct ibv_send_wr **bad_wr);
 // or
-ibv_post_recv(qp, &wr, &bad_wr);
+int ibv_post_recv(struct ibv_qp *qp, struct ibv_recv_wr *wr,
+                  struct ibv_recv_wr **bad_wr);
 ```
 
-**rdma-core Actions:**
-- Write work queue entry (WQE) to memory-mapped send queue
-- Ring doorbell (MMIO write to notify hardware)
+**EFA Provider Implementation** ([rdma-core/providers/efa/verbs.c](https://github.com/linux-rdma/rdma-core/blob/master/providers/efa/verbs.c)):
+
+```c
+// EFA provider ibv_post_send implementation
+static int efa_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
+                         struct ibv_send_wr **bad_wr) {
+  struct efa_qp *qp = to_efa_qp(ibqp);
+
+  while (wr) {
+    // Write work queue entry to memory-mapped send queue
+    struct efa_io_tx_wqe *wqe = efa_get_next_wqe(qp);
+
+    wqe->addr = wr->sg_list[0].addr;
+    wqe->length = wr->sg_list[0].length;
+    wqe->lkey = wr->sg_list[0].lkey;
+    wqe->wr_id = wr->wr_id;
+
+    // Advance producer index
+    qp->sq.pc++;
+
+    wr = wr->next;
+  }
+
+  // Ring doorbell via MMIO write
+  mmio_write32(qp->sq.db, qp->sq.pc);
+
+  return 0;
+}
+```
+
+**rdma-core Actions**:
+- Write work queue entry (WQE) to memory-mapped send queue buffer
+- Ring doorbell register (MMIO write to notify EFA hardware)
 - **Zero syscalls** - entirely userspace operation
+- No kernel involvement in fast path
+
+**Key Functions**:
+- `ibv_post_send()` - Post send work request ([libibverbs/verbs.h](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h))
+- `efa_post_send()` - EFA implementation ([providers/efa/verbs.c](https://github.com/linux-rdma/rdma-core/blob/master/providers/efa/verbs.c))
+- `mmio_write32()` - Doorbell ring to hardware
 
 - **Timing**: ~100-200 ns (memory writes + doorbell)
 
@@ -199,30 +360,109 @@ ibv_post_recv(qp, &wr, &bad_wr);
 #### 10. Receiver Side
 
 **Reverse Flow:**
+
+**EFA Hardware**:
+- Receives packet from network
+- DMAs data to registered memory buffer
+- Writes completion queue entry (CQE) to memory-mapped CQ
+
+**rdma-core** ([rdma-core/providers/efa/verbs.c](https://github.com/linux-rdma/rdma-core/blob/master/providers/efa/verbs.c)):
+```c
+// Poll completion queue
+int ibv_poll_cq(struct ibv_cq *cq, int num_entries, struct ibv_wc *wc) {
+  struct efa_cq *efa_cq = to_efa_cq(cq);
+
+  // Read from memory-mapped CQ buffer
+  for (int i = 0; i < num_entries; i++) {
+    struct efa_io_rx_cdesc *cqe = &efa_cq->buf[efa_cq->cc & efa_cq->cq_mask];
+
+    // Check if CQE is valid
+    if (cqe->phase != efa_cq->phase) break;
+
+    // Extract completion info
+    wc[i].wr_id = cqe->wr_id;
+    wc[i].status = IBV_WC_SUCCESS;
+    wc[i].byte_len = cqe->length;
+
+    efa_cq->cc++;
+  }
+
+  return i;
+}
+```
+
+**Libfabric** ([libfabric/prov/efa/src/efa_cq.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_cq.c)):
+```c
+// Poll EFA completion queue
+ssize_t efa_cq_read(struct fid_cq *cq_fid, void *buf, size_t count) {
+  struct efa_cq *cq = container_of(cq_fid, struct efa_cq, cq_fid);
+
+  // Poll ibv_cq
+  ret = ibv_poll_cq(cq->ibv_cq, count, wc);
+
+  // Translate to libfabric completion format
+  for (i = 0; i < ret; i++) {
+    comp[i].op_context = (void*)wc[i].wr_id;
+    comp[i].flags = 0;
+    comp[i].len = wc[i].byte_len;
+  }
+
+  return ret;
+}
+```
+
+**OFI Plugin** ([aws-ofi-nccl/src/nccl_ofi_net.c](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_net.c)):
+```c
+// Test for completion
+ncclResult_t nccl_net_ofi_itest(void* request, int* done, int* size) {
+  nccl_net_ofi_req_t* req = (nccl_net_ofi_req_t*)request;
+
+  // Poll libfabric CQ
+  ret = fi_cq_read(req->comm->cq, &comp, 1);
+
+  if (ret > 0) {
+    *done = 1;
+    *size = comp.len;
+  }
+
+  return ncclSuccess;
+}
+```
+
+**Proxy Thread** ([nccl/src/proxy.cc](https://github.com/NVIDIA/nccl/blob/master/src/proxy.cc)):
+- Polls for network completion via `ncclNet->itest()`
+- Signals GPU kernel via shared memory flag
+- Updates NCCL channel state
+
+**Flow Summary**:
 ```
 EFA Hardware
-  ↓ DMA to memory, write completion
-EFA Driver
-  ↓ Completion in memory-mapped CQ
+  ↓ DMA to memory, write completion to memory-mapped CQ
 rdma-core
-  ↓ ibv_poll_cq() reads completion
+  ↓ ibv_poll_cq() reads CQE from memory
 Libfabric
-  ↓ fi_cq_read()
+  ↓ fi_cq_read() translates to libfabric format
 OFI Plugin
-  ↓ irecv completion
+  ↓ ncclNet->itest() returns completion
 Proxy Thread
-  ↓ Signal GPU
+  ↓ Signal GPU via shared memory
 NCCL Kernel
-  ↓ Copy to destination
+  ↓ Copy to destination, continue operation
 GPU Memory
 ```
 
 #### 11. Completion
 
-- Proxy polls completion queue (via ibv_poll_cq in rdma-core)
-- Updates NCCL state
-- GPU kernel completes
-- CUDA stream progresses
+**NCCL Proxy** ([nccl/src/proxy.cc](https://github.com/NVIDIA/nccl/blob/master/src/proxy.cc)):
+- Proxy polls completion queue via `ncclNet->itest()`
+- Calls through libfabric `fi_cq_read()` → rdma-core `ibv_poll_cq()`
+- Updates NCCL channel state when complete
+- Signals GPU kernel to continue
+
+**GPU Kernel**:
+- Waits for proxy signal via shared memory polling
+- Continues with next operation step
+- Eventually completes, allowing CUDA stream to progress
 
 ## Memory Flow Details
 
