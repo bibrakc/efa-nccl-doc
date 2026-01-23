@@ -16,6 +16,9 @@ Rank 3: [A3] ─┘
 ```
 
 **API:**
+
+**`ncclAllReduce()`** - AllReduce collective operation ([nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h) - NCCL external API):
+
 ```c
 ncclAllReduce(const void* sendbuff, void* recvbuff,
               size_t count, ncclDataType_t datatype,
@@ -47,6 +50,9 @@ Rank 3: receives [Data]
 ```
 
 **API:**
+
+**`ncclBroadcast()`** - Broadcast collective operation ([nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h) - NCCL external API):
+
 ```c
 ncclBroadcast(const void* sendbuff, void* recvbuff,
               size_t count, ncclDataType_t datatype,
@@ -71,6 +77,9 @@ Rank 3: [A3] ─┘
 ```
 
 **API:**
+
+**`ncclReduce()`** - Reduce collective operation ([nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h) - NCCL external API):
+
 ```c
 ncclReduce(const void* sendbuff, void* recvbuff,
            size_t count, ncclDataType_t datatype,
@@ -90,6 +99,9 @@ Rank 3: [A3] ─┘
 ```
 
 **API:**
+
+**`ncclAllGather()`** - AllGather collective operation ([nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h) - NCCL external API):
+
 ```c
 ncclAllGather(const void* sendbuff, void* recvbuff,
               size_t sendcount, ncclDataType_t datatype,
@@ -113,6 +125,9 @@ Rank 3: [A3] ─┘                    Rank 3: [sum(A3_chunk3)]
 ```
 
 **API:**
+
+**`ncclReduceScatter()`** - ReduceScatter collective operation ([nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h) - NCCL external API):
+
 ```c
 ncclReduceScatter(const void* sendbuff, void* recvbuff,
                   size_t recvcount, ncclDataType_t datatype,
@@ -128,6 +143,8 @@ ncclReduceScatter(const void* sendbuff, void* recvbuff,
 ### Send/Recv
 
 **Operation**: Point-to-point communication between two ranks.
+
+**`ncclSend()` / `ncclRecv()`** - Point-to-point send/receive operations ([nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h) - NCCL external API):
 
 ```c
 // Sender

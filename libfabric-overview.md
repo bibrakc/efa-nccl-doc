@@ -252,6 +252,8 @@ fi_mr_reg(domain, gpu_buf, size, access, 0, 0, FI_HMEM_CUDA, &mr, NULL);
 
 #### Send
 
+**`fi_send()` / `fi_senddata()` / `fi_inject()`** ([fi_msg.h:104](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L104), [fi_msg.h:133](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L133)):
+
 ```c
 // Standard send
 ssize_t fi_send(struct fid_ep *ep,
@@ -277,14 +279,14 @@ ssize_t fi_inject(struct fid_ep *ep,
                   fi_addr_t dest_addr);
 ```
 
-(`fi_send()` ([fi_msg.h:104](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L104)), `fi_inject()` ([fi_msg.h:133](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L133)))
-
 **Characteristics:**
 - **fi_send**: Asynchronous, requires completion
 - **fi_inject**: Synchronous, no completion, limited size (< 4 KB)
 - **fi_senddata**: Carries immediate data to receiver
 
 #### Receive
+
+**`fi_recv()`** ([fi_msg.h:67](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L67)):
 
 ```c
 ssize_t fi_recv(struct fid_ep *ep,
@@ -295,8 +297,6 @@ ssize_t fi_recv(struct fid_ep *ep,
                 void *context);
 ```
 
-(`fi_recv()` ([fi_msg.h:67](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L67)))
-
 **Pre-posting:**
 - Must be posted before data arrives (for RDM)
 - Matched with incoming sends
@@ -305,6 +305,8 @@ ssize_t fi_recv(struct fid_ep *ep,
 ### Tagged Messages
 
 For message matching by tag:
+
+**`fi_tsend()` / `fi_trecv()`** ([fi_tagged.h:121](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L121), [fi_tagged.h:98](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L98)):
 
 ```c
 // Tagged send
@@ -327,8 +329,6 @@ ssize_t fi_trecv(struct fid_ep *ep,
                  void *context);
 ```
 
-(`fi_tsend()` ([fi_tagged.h:121](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L121)), `fi_trecv()` ([fi_tagged.h:98](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L98)))
-
 **Tag Matching:**
 ```c
 // Receive matches if: (recv_tag & ~ignore) == (send_tag & ~ignore)
@@ -348,6 +348,8 @@ Direct memory access without remote CPU involvement:
 
 #### Read
 
+**`fi_read()`** ([fi_rma.h:82](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_rma.h#L82)):
+
 ```c
 ssize_t fi_read(struct fid_ep *ep,
                 void *buf,
@@ -358,8 +360,6 @@ ssize_t fi_read(struct fid_ep *ep,
                 uint64_t remote_key,
                 void *context);
 ```
-
-(`fi_read()` ([fi_rma.h:82](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_rma.h#L82)))
 
 **Flow:**
 ```
@@ -374,6 +374,8 @@ Local                           Remote
 
 #### Write
 
+**`fi_write()`** ([fi_rma.h:111](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_rma.h#L111)):
+
 ```c
 ssize_t fi_write(struct fid_ep *ep,
                  const void *buf,
@@ -384,8 +386,6 @@ ssize_t fi_write(struct fid_ep *ep,
                  uint64_t remote_key,
                  void *context);
 ```
-
-(`fi_write()` ([fi_rma.h:111](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_rma.h#L111)))
 
 **Flow:**
 ```
@@ -406,6 +406,8 @@ Local                           Remote
 ### Atomic Operations
 
 Atomic read-modify-write:
+
+**`fi_atomic()`** ([fi_atomic.h:155](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_atomic.h#L155)):
 
 ```c
 ssize_t fi_atomic(struct fid_ep *ep,

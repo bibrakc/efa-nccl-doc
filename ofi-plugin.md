@@ -70,6 +70,8 @@ The plugin implements all functions in the `ncclNet_t` interface:
 
 ### Initialization
 
+**`nccl_net_ofi_init()`** ([src/nccl_ofi_net.c:1849](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1849)):
+
 ```c
 ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 {
@@ -91,6 +93,8 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 - Setup logging
 
 ### Device Discovery
+
+**`nccl_net_ofi_devices()` / `nccl_net_ofi_getProperties()`** ([src/nccl_ofi_net.c:1903](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1903), [src/nccl_ofi_net.c:1911](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1911)):
 
 ```c
 ncclResult_t nccl_net_ofi_devices(int* ndev)
@@ -123,6 +127,8 @@ ncclResult_t nccl_net_ofi_getProperties(int dev,
 
 #### Listener (Passive Side)
 
+**`nccl_net_ofi_listen()`** ([src/nccl_ofi_net.c:1262](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1262)):
+
 ```c
 ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
                                  void** listenComm)
@@ -149,6 +155,8 @@ ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
 
 #### Connector (Active Side)
 
+**`nccl_net_ofi_connect()`** ([src/nccl_ofi_net.c:1365](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1365)):
+
 ```c
 ncclResult_t nccl_net_ofi_connect(int dev, void* handle,
                                   void** sendComm)
@@ -173,6 +181,8 @@ ncclResult_t nccl_net_ofi_connect(int dev, void* handle,
 
 #### Accept (Complete Passive Connection)
 
+**`nccl_net_ofi_accept()`** ([src/nccl_ofi_net.c:1537](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1537)):
+
 ```c
 ncclResult_t nccl_net_ofi_accept(void* listenComm,
                                  void** recvComm)
@@ -187,6 +197,8 @@ ncclResult_t nccl_net_ofi_accept(void* listenComm,
 **Note**: EFA uses connectionless (UD-like) transport, so "connection" is mostly state tracking.
 
 ### Memory Registration
+
+**`nccl_net_ofi_regMr()`** ([src/nccl_ofi_net.c:724](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L724)):
 
 ```c
 ncclResult_t nccl_net_ofi_regMr(void* comm, void* data,
@@ -240,6 +252,8 @@ struct mr_cache {
 
 ### Send Operations
 
+**`nccl_net_ofi_isend()`** ([src/nccl_ofi_net.c:1054](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1054)):
+
 ```c
 ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data,
                                 int size, int tag,
@@ -279,6 +293,8 @@ ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data,
 
 ### Receive Operations
 
+**`nccl_net_ofi_irecv()`** ([src/nccl_ofi_net.c:1132](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1132)):
+
 ```c
 ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n,
                                 void** data, int* sizes,
@@ -316,6 +332,8 @@ ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n,
 
 ### Flush Operations (RDMA Write Completion)
 
+**`nccl_net_ofi_iflush()`** ([src/nccl_ofi_net.c:1176](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1176)):
+
 ```c
 ncclResult_t nccl_net_ofi_iflush(void* recvComm, int n,
                                  void** data, int* sizes,
@@ -344,6 +362,8 @@ ncclResult_t nccl_net_ofi_iflush(void* recvComm, int n,
 - EFA: Use dummy read for ordering
 
 ### Completion Testing
+
+**`nccl_net_ofi_test()`** ([src/nccl_ofi_net.c:991](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L991)):
 
 ```c
 ncclResult_t nccl_net_ofi_test(void* request, int* done,
@@ -389,6 +409,8 @@ ncclResult_t nccl_net_ofi_test(void* request, int* done,
 - Batches completions for efficiency
 
 ### Cleanup
+
+**`nccl_net_ofi_deregMr()` / `nccl_net_ofi_close()`** ([src/nccl_ofi_net.c:796](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L796), [src/nccl_ofi_net.c:1809](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1809)):
 
 ```c
 ncclResult_t nccl_net_ofi_deregMr(void* comm, void* mhandle)

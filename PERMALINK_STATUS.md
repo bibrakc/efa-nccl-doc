@@ -231,6 +231,54 @@ struct struct_name {
 
 **Session 4 Result**: All documentation files now have consistent permalink formatting both inline (above code blocks) and in Code References sections at the bottom.
 
+## Session 5: Function API Declaration Permalinks
+
+**Issue Identified**: Function API declarations/signatures in code blocks (not just structs) were missing permalinks immediately above them.
+
+**Files Fixed** (42 function API declarations across 4 files):
+
+1. **nccl-collectives.md** - Added permalinks for 6 NCCL collective API functions:
+   - `ncclAllReduce()`, `ncclBroadcast()`, `ncclReduce()`
+   - `ncclAllGather()`, `ncclReduceScatter()`
+   - `ncclSend()` / `ncclRecv()`
+   - Note: External NVIDIA APIs, linked to NCCL GitHub master branch
+
+2. **libfabric-overview.md** - Added permalinks for 9 libfabric data transfer API functions:
+   - `fi_send()` / `fi_senddata()` / `fi_inject()`
+   - `fi_recv()`
+   - `fi_tsend()` / `fi_trecv()` (tagged messaging)
+   - `fi_read()` / `fi_write()` (RMA operations)
+   - `fi_atomic()` (atomic operations)
+
+3. **rdma-core-and-verbs.md** - Added permalinks for 14 verbs API functions:
+   - Device Management: `ibv_get_device_list()`, `ibv_open_device()`, `ibv_query_device()`, `ibv_close_device()`
+   - Protection Domain: `ibv_alloc_pd()`, `ibv_dealloc_pd()`
+   - Memory Registration: `ibv_reg_mr()`, `ibv_dereg_mr()`
+   - Queue Pair Operations: `ibv_create_cq()`, `ibv_create_qp()`, `ibv_modify_qp()`, `ibv_post_send()`, `ibv_post_recv()`, `ibv_poll_cq()`
+
+4. **ofi-plugin.md** - Added permalinks for 13 ncclNet_t plugin implementation functions:
+   - `nccl_net_ofi_init()` - Plugin initialization
+   - `nccl_net_ofi_devices()` / `nccl_net_ofi_getProperties()` - Device discovery
+   - `nccl_net_ofi_listen()`, `nccl_net_ofi_connect()`, `nccl_net_ofi_accept()` - Connection establishment
+   - `nccl_net_ofi_regMr()` - Memory registration
+   - `nccl_net_ofi_isend()`, `nccl_net_ofi_irecv()` - Data transfer
+   - `nccl_net_ofi_iflush()` - RDMA write completion
+   - `nccl_net_ofi_test()` - Completion testing
+   - `nccl_net_ofi_deregMr()`, `nccl_net_ofi_close()` - Cleanup
+
+**Pattern Enforced**: Every function API declaration/signature in a code block now has a permalink above it:
+```markdown
+**`function_name()`** ([file:line](github_url)):
+
+```c
+return_type function_name(params) {
+  // implementation or signature
+}
+```
+```
+
+**Session 5 Result**: All 42 function API declarations now have permalinks above their code blocks, completing the permalink coverage for both structs and functions.
+
 ## Remaining Documents
 
 ### Documents reviewed - no new linkable content:
@@ -283,6 +331,13 @@ struct struct_name {
 - **topology-and-binding.md**: 1 helper struct definition
 - **nccl-core.md**: Already compliant (verified)
 - **Session 4 fixes**: 8 struct definitions now have proper inline permalinks above code blocks
+
+### Function API Permalinks Added in Session 5
+- **nccl-collectives.md**: 6 NCCL API functions (external NVIDIA)
+- **libfabric-overview.md**: 9 libfabric data transfer API functions
+- **rdma-core-and-verbs.md**: 14 verbs API functions
+- **ofi-plugin.md**: 13 ncclNet_t plugin implementation functions
+- **Session 5 total**: 42 function API declarations now have permalinks above code blocks
 
 ### Total Permalinks Added
 - **ofi-plugin.md**: 42 permalinks

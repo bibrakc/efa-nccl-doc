@@ -228,12 +228,14 @@ int efa_poll_cq(struct ibv_cq *ibcq, int nwc, struct ibv_wc *wc)  // ([providers
 
 ### Device Management
 
+**`ibv_get_device_list()` / `ibv_open_device()` / `ibv_query_device()` / `ibv_close_device()`** ([verbs.h:2291](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2291), [verbs.h:2382](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2382)):
+
 ```c
 // List RDMA devices
-struct ibv_device **ibv_get_device_list(int *num_devices);  // ([libibverbs/verbs.h:2291](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2291))
+struct ibv_device **ibv_get_device_list(int *num_devices);
 
 // Open device
-struct ibv_context *ibv_open_device(struct ibv_device *device);  // ([libibverbs/verbs.h:2382](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2382))
+struct ibv_context *ibv_open_device(struct ibv_device *device);
 
 // Query device capabilities
 int ibv_query_device(struct ibv_context *context,
@@ -245,9 +247,11 @@ int ibv_close_device(struct ibv_context *context);
 
 ### Protection Domain
 
+**`ibv_alloc_pd()` / `ibv_dealloc_pd()`** ([verbs.h:2539](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2539)):
+
 ```c
 // Allocate protection domain (memory isolation unit)
-struct ibv_pd *ibv_alloc_pd(struct ibv_context *context);  // ([libibverbs/verbs.h:2539](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2539))
+struct ibv_pd *ibv_alloc_pd(struct ibv_context *context);
 
 // Deallocate PD
 int ibv_dealloc_pd(struct ibv_pd *pd);
@@ -255,10 +259,12 @@ int ibv_dealloc_pd(struct ibv_pd *pd);
 
 ### Memory Registration
 
+**`ibv_reg_mr()` / `ibv_dereg_mr()`** ([verbs.h:2644](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2644), [verbs.h:2715](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2715)):
+
 ```c
 // Register memory region
 struct ibv_mr *ibv_reg_mr(struct ibv_pd *pd, void *addr, size_t length,
-                          int access_flags);  // ([libibverbs/verbs.h:2644](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2644))
+                          int access_flags);
 
 // Access flags:
 // IBV_ACCESS_LOCAL_WRITE  - Local writes allowed
@@ -266,19 +272,21 @@ struct ibv_mr *ibv_reg_mr(struct ibv_pd *pd, void *addr, size_t length,
 // IBV_ACCESS_REMOTE_WRITE - Remote RDMA write allowed
 
 // Deregister memory
-int ibv_dereg_mr(struct ibv_mr *mr);  // ([libibverbs/verbs.h:2715](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2715))
+int ibv_dereg_mr(struct ibv_mr *mr);
 ```
 
 ### Queue Pair Operations
 
+**`ibv_create_cq()` / `ibv_create_qp()` / `ibv_modify_qp()` / `ibv_post_send()` / `ibv_post_recv()` / `ibv_poll_cq()`** ([verbs.h:2912](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2912), [verbs.h:3125](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L3125), [verbs.h:3458](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L3458), [verbs.h:3467](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L3467), [verbs.h:2990](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2990)):
+
 ```c
 // Create completion queue
 struct ibv_cq *ibv_create_cq(struct ibv_context *context, int cqe,
-                             void *cq_context, ...);  // ([libibverbs/verbs.h:2912](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2912))
+                             void *cq_context, ...);
 
 // Create queue pair
 struct ibv_qp *ibv_create_qp(struct ibv_pd *pd,
-                             struct ibv_qp_init_attr *qp_init_attr);  // ([libibverbs/verbs.h:3125](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L3125))
+                             struct ibv_qp_init_attr *qp_init_attr);
 
 // Modify QP state (RESET → INIT → RTR → RTS)
 int ibv_modify_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,
@@ -286,14 +294,14 @@ int ibv_modify_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,
 
 // Post send work request
 int ibv_post_send(struct ibv_qp *qp, struct ibv_send_wr *wr,
-                  struct ibv_send_wr **bad_wr);  // ([libibverbs/verbs.h:3458](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L3458))
+                  struct ibv_send_wr **bad_wr);
 
 // Post receive work request
 int ibv_post_recv(struct ibv_qp *qp, struct ibv_recv_wr *wr,
-                  struct ibv_recv_wr **bad_wr);  // ([libibverbs/verbs.h:3467](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L3467))
+                  struct ibv_recv_wr **bad_wr);
 
 // Poll for completions
-int ibv_poll_cq(struct ibv_cq *cq, int num_entries, struct ibv_wc *wc);  // ([libibverbs/verbs.h:2990](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2990))
+int ibv_poll_cq(struct ibv_cq *cq, int num_entries, struct ibv_wc *wc);
 ```
 
 ## libfabric → verbs Mapping
