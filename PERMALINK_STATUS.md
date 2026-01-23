@@ -181,6 +181,25 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 **Status**: Code references section added for external APIs
 **External APIs documented**: AMD ROCm/HIP (hip*) functions
 
+### nccl-core.md ✅
+**Status**: Comprehensive code references for ncclNet_t interface
+**Key references added**:
+- 4 NCCL structures (ncclComm_t, ncclNet_t, etc.)
+- 6 NCCL API functions (ncclCommInitRank, ncclAllReduce, etc.)
+- 13 ncclNet_t interface functions (plugin implementation required)
+- 12 environment variables
+- 6 error codes
+
+### nccl-collectives.md ✅
+**Status**: Comprehensive code references for collective operations
+**Key references added**:
+- 6 collective functions (ncclAllReduce, ncclBroadcast, etc.)
+- 10 data types (ncclDataType_t enum values)
+- 5 reduction operations (ncclRedOp_t enum values)
+- 4 algorithm types (Ring, Tree, CollNet, NVLS)
+- 3 protocol types (Simple, LL, LL128)
+- 3 environment variables
+
 ## Remaining Documents
 
 ### Documents reviewed - no new linkable content:
@@ -200,12 +219,12 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 ## Summary Statistics
 
 ### Completed
-- **Documents processed**: 26 / 29 (90%)
+- **Documents processed**: 28 / 29 (97%)
   - 4 documents from session 1 (04, 05, 07, 08)
   - 6 documents from session 1 continuation (00, 01, 02, 03, 06, 09)
   - 3 documents from session 2 (10, 11, 13)
   - 5 documents reviewed in session 2 (12, 14, 19, 20, 22)
-  - 8 documents from session 3 (efa-hardware-architecture, srd-protocol, cuda-memory, dmabuf-gpu-memory, nccl-datapath, neuron-memory, rocm-memory, + reviewed docs)
+  - 10 documents from session 3 (efa-hardware-architecture, srd-protocol, cuda-memory, dmabuf-gpu-memory, nccl-datapath, neuron-memory, rocm-memory, nccl-core, nccl-collectives, + reviewed docs)
 
 ### New Permalinks Added in Session 2
 - **rdma-core-and-verbs.md**: 15 permalinks
@@ -221,7 +240,9 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 - **nccl-datapath.md**: 7 function permalinks + comprehensive references
 - **neuron-memory.md**: Code references (external APIs)
 - **rocm-memory.md**: Code references (external APIs)
-- **Session 3 total**: 41 permalinks + comprehensive code references
+- **nccl-core.md**: Comprehensive code references (ncclNet_t interface)
+- **nccl-collectives.md**: Comprehensive code references (collective operations)
+- **Session 3 total**: 41 permalinks + comprehensive code references for all files
 
 ### Total Permalinks Added
 - **ofi-plugin.md**: 42 permalinks
