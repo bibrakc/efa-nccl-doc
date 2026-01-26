@@ -11,7 +11,8 @@ This documentation provides in-depth coverage of the complete stack used for GPU
 ### Core Concepts
 
 - **[overview.md](overview.md)** - Architecture overview and component interactions
-- **[nccl-core.md](nccl-core.md)** - NCCL fundamentals, topology, communicators, channels
+- **[nccl-core.md](nccl-core.md)** - NCCL fundamentals, topology, communicators
+- **[nccl-channels.md](nccl-channels.md)** - NCCL channels: parallelism, establishment, multi-rail support, tuning
 - **[nccl-collectives.md](nccl-collectives.md)** - Collective operations, algorithms (Ring/Tree), protocols (Simple/LL/LL128)
 - **[nccl-tuner.md](nccl-tuner.md)** - Cost-based algorithm/protocol selection, AWS region-based tuner, channel count tuning
 - **[nccl-datapath.md](nccl-datapath.md)** - Complete data path from GPU through network
@@ -76,12 +77,13 @@ Start with these documents in order:
 
 - **Performance tuning** → [optimizations.md](optimizations.md), [optimization-opportunities.md](optimization-opportunities.md)
 - **Debugging network issues** → [ofi-plugin.md](ofi-plugin.md), [efa-provider.md](efa-provider.md)
+- **Channel configuration and tuning** → [nccl-channels.md](nccl-channels.md)
 - **Algorithm selection** → [nccl-collectives.md](nccl-collectives.md), [algorithms/](algorithms/) for detailed analysis
 - **Collective algorithms deep dive** → [algorithms/ring-algorithm.md](algorithms/ring-algorithm.md), [algorithms/tree-algorithm.md](algorithms/tree-algorithm.md), [algorithms/nvls-tree-algorithm.md](algorithms/nvls-tree-algorithm.md), [algorithms/pat-algorithm.md](algorithms/pat-algorithm.md)
 - **Memory registration problems** → [rdma-memreg.md](rdma-memreg.md), [mr-cache-implementation.md](mr-cache-implementation.md)
 - **Threading issues** → [threading-model.md](threading-model.md)
 - **Connection protocols** → [ofi-plugin-protocols.md](ofi-plugin-protocols.md)
-- **Topology and multi-NIC** → [topology-and-binding.md](topology-and-binding.md)
+- **Topology and multi-NIC** → [topology-and-binding.md](topology-and-binding.md), [nccl-channels.md](nccl-channels.md)
 - **Understanding RDMA keys** → [lkey-rkey-explained.md](lkey-rkey-explained.md)
 - **Memory allocators & caching** → [freelist-allocator.md](freelist-allocator.md), [mr-cache-implementation.md](mr-cache-implementation.md)
 - **GPU memory registration** → [cuda-memory.md](cuda-memory.md), [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md), [neuron-memory.md](neuron-memory.md), [rocm-memory.md](rocm-memory.md)
