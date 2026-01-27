@@ -12,6 +12,7 @@ This documentation provides in-depth coverage of the complete stack used for GPU
 
 - **[overview.md](overview.md)** - Architecture overview and component interactions
 - **[nccl-core.md](nccl-core.md)** - NCCL fundamentals, topology, communicators
+- **[nccl-usage.md](nccl-usage.md)** - Communicators, operations, threading, and practical usage patterns
 - **[nccl-channels.md](nccl-channels.md)** - NCCL channels: parallelism, establishment, multi-rail support, tuning
 - **[nccl-collectives.md](nccl-collectives.md)** - Collective operations, algorithms (Ring/Tree), protocols (Simple/LL/LL128)
 - **[nccl-tuner.md](nccl-tuner.md)** - Cost-based algorithm/protocol selection, AWS region-based tuner, channel count tuning
@@ -77,6 +78,7 @@ Start with these documents in order:
 
 - **Performance tuning** → [optimizations.md](optimizations.md), [optimization-opportunities.md](optimization-opportunities.md)
 - **Debugging network issues** → [ofi-plugin.md](ofi-plugin.md), [efa-provider.md](efa-provider.md)
+- **Communicator usage patterns** → [nccl-usage.md](nccl-usage.md)
 - **Channel configuration and tuning** → [nccl-channels.md](nccl-channels.md)
 - **Algorithm selection** → [nccl-collectives.md](nccl-collectives.md), [algorithms/](algorithms/) for detailed analysis
 - **Collective algorithms deep dive** → [algorithms/ring-algorithm.md](algorithms/ring-algorithm.md), [algorithms/tree-algorithm.md](algorithms/tree-algorithm.md), [algorithms/nvls-tree-algorithm.md](algorithms/nvls-tree-algorithm.md), [algorithms/pat-algorithm.md](algorithms/pat-algorithm.md)
