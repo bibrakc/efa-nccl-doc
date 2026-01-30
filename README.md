@@ -55,6 +55,7 @@ This documentation provides in-depth coverage of the complete stack used for GPU
 - **[topology-and-binding.md](topology-and-binding.md)** - Topology detection and interface binding mechanisms
 - **[freelist-allocator.md](freelist-allocator.md)** - Freelist allocator for high-performance object pooling (estimated 20-100x faster than malloc)
 - **[mr-cache-implementation.md](mr-cache-implementation.md)** - Memory registration cache implementation details (approximately 25x speedup)
+- **[nccl-buffsize-explained.md](nccl-buffsize-explained.md)** - NCCL_BUFFSIZE environment variable, channel buffers, pipelining, and performance/memory tradeoffs
 
 ### GPU and Accelerator Memory
 
