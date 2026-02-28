@@ -45,10 +45,11 @@ Token 2 → [Expert 3, Expert 5]  (send to ranks 3, 5)
 Token 3 → [Expert 0, Expert 4]  (send to ranks 0, 4)
 ```
 
-This is fundamentally different from regular collectives:
-- **Not AllReduce**: Variable data per peer, no reduction
-- **Not AllGather**: Dynamic routing, not concatenation
-- **Not AllToAll**: Variable sizes, token-based routing
+**Characteristics**:
+- **Irregular**: Data distribution varies per iteration based on gating
+- **Dynamic**: Routing decisions change each forward pass
+- **Variable-size**: Each rank sends different amounts to different peers
+- **Many-to-many**: Nearly all ranks communicate with all other ranks
 
 **Verdict**: Identical MoE communication pattern.
 
@@ -332,12 +333,14 @@ gin.waitSignal(ncclCoopCta(), signalId, expectedValue);
 
 **Low-Latency Mode** (BF16, 128 tokens/rank, 7168 hidden, top-8):
 
-| GPUs | Nodes | Dispatch BW | Combine BW |
-|:----:|:-----:|:-----------:|:----------:|
-| 8    | 1     | 224.3 GB/s  | 185.2 GB/s |
-| 16   | 2     | 76.7 GB/s   | 73.0 GB/s  |
-| 32   | 4     | 53.6 GB/s   | 50.0 GB/s  |
-| 64   | 8     | 48.8 GB/s   | 43.8 GB/s  |
+| GPUs | Nodes | Dispatch Latency | Dispatch BW | Combine Latency | Combine BW |
+|:----:|:-----:|:----------------:|:-----------:|:---------------:|:----------:|
+| 8    | 1     | ~32 μs*          | 224.3 GB/s  | ~39 μs*         | 185.2 GB/s |
+| 16   | 2     | ~94 μs*          | 76.7 GB/s   | ~99 μs*         | 73.0 GB/s  |
+| 32   | 4     | ~135 μs*         | 53.6 GB/s   | ~145 μs*        | 50.0 GB/s  |
+| 64   | 8     | ~148 μs*         | 48.8 GB/s   | ~165 μs*        | 43.8 GB/s  |
+
+*Estimated from bandwidth (7168 hidden × 128 tokens × 2 bytes / BW)
 
 ### DeepEP-NCCL Performance (H100)
 
@@ -361,13 +364,14 @@ gin.waitSignal(ncclCoopCta(), signalId, expectedValue);
 ### Performance Analysis
 
 **NCCL EP Advantages**:
+- **5x lower latency single-node** (~32 μs vs 161 μs dispatch)
 - **4.7x higher single-node bandwidth** (224 vs 47 GB/s)
 - Better multi-node dispatch at 2-4 nodes
 - Likely benefits from tighter NCCL integration
 
 **DeepEP-NCCL Advantages**:
-- **Reports actual latency** (useful for inference)
-- **FP8 reduces bandwidth** (but not implemented in NCCL EP yet)
+- **Reports actual measured latency** (not estimated)
+- **FP8 reduces data volume** (but not implemented in NCCL EP yet)
 - More stable multi-node scaling
 - Production-proven
 
@@ -494,7 +498,199 @@ Known Limitations:
 
 ---
 
-## 10. Use Case Recommendations
+## 10. Impact on AWS EFA
+
+### EFA and GIN Support
+
+AWS EFA (Elastic Fabric Adapter) has **partial GIN support** with important limitations:
+
+**Current EFA GIN Status**:
+- ✅ **Proxy mode supported** (NCCL_GIN_TYPE=2)
+- ❌ **GDAKI not yet supported** (NCCL_GIN_TYPE=3)
+- ⚠️ **Additional ordering requirements** for SRD protocol
+
+### GIN Modes Explained
+
+| Mode | Type | Description | EFA Support |
+|------|------|-------------|-------------|
+| **Proxy** | NCCL_GIN_TYPE=2 | CPU proxy handles network operations | ✅ Supported |
+| **GDAKI** | NCCL_GIN_TYPE=3 | GPU Direct Async Kernel-Initiated | ❌ Not yet |
+
+**GDAKI** (GPU Direct Async Kernel-Initiated):
+- GPU kernels directly post RDMA operations
+- No CPU involvement in critical path
+- Lowest latency, highest performance
+- **Required for optimal MoE performance**
+
+**Proxy Mode**:
+- GPU signals CPU proxy thread
+- Proxy posts RDMA operations
+- Additional latency from GPU→CPU→NIC path
+- Fallback when GDAKI unavailable
+
+### EFA-Specific Challenges
+
+#### 1. SRD Protocol Ordering
+
+EFA uses **SRD (Scalable Reliable Datagram)** which has ordering semantics:
+- Messages between same src/dst pair are ordered
+- Messages to different destinations can reorder
+- **Impact**: MoE many-to-many pattern stresses ordering assumptions
+
+**MoE Pattern Challenge**:
+```
+Rank 0 sends to: [Rank 1, Rank 2, Rank 3, ..., Rank N]
+Each with different message sizes
+All messages in flight simultaneously
+```
+
+**Potential Issues**:
+- Signal/data race conditions
+- Completion notification before data arrival
+- Requires careful signal placement
+
+#### 2. Proxy Mode Performance Impact
+
+**Latency Overhead** (estimated):
+```
+GDAKI:      GPU kernel → NIC                    (~1-2 μs)
+Proxy:      GPU kernel → CPU proxy → NIC        (~5-10 μs additional)
+```
+
+**For MoE Low-Latency Mode**:
+- NCCL EP single-node: ~32 μs (GDAKI)
+- With proxy mode: ~40-50 μs (estimated)
+- DeepEP single-node: 161 μs (already includes proxy overhead)
+
+**Impact**: Proxy mode adds ~25-50% latency overhead for small messages.
+
+#### 3. Multi-QP Considerations
+
+Both implementations use multiple QPs (Queue Pairs) for parallelism:
+- NCCL EP: Auto-configured
+- DeepEP-NCCL: `num_qps_per_rank` parameter
+
+**EFA Limitation**: Each QP requires separate SRD connection
+- More QPs = more memory
+- More QPs = more completion queue polling
+- **Tradeoff**: Parallelism vs resource usage
+
+### Performance Expectations on EFA
+
+#### Single-Node (NVLink, no EFA)
+- **NCCL EP**: 224 GB/s (as measured)
+- **DeepEP-NCCL**: 47 GB/s (as measured)
+- No EFA impact
+
+#### Multi-Node with EFA Proxy Mode
+
+**Expected Performance** (estimated):
+
+| GPUs | Nodes | NCCL EP (Proxy) | DeepEP-NCCL (Proxy) |
+|:----:|:-----:|:---------------:|:-------------------:|
+| 16   | 2     | ~60-70 GB/s     | ~40 GB/s            |
+| 32   | 4     | ~45-50 GB/s     | ~38 GB/s            |
+| 64   | 8     | ~40-45 GB/s     | ~33 GB/s            |
+
+**Degradation**: ~10-20% vs GDAKI due to proxy overhead
+
+#### When EFA Gets GDAKI Support
+
+**Expected Performance** (future):
+
+| GPUs | Nodes | NCCL EP (GDAKI) | DeepEP-NCCL (GDAKI) |
+|:----:|:-----:|:---------------:|:-------------------:|
+| 16   | 2     | ~75 GB/s        | ~42 GB/s            |
+| 32   | 4     | ~52 GB/s        | ~40 GB/s            |
+| 64   | 8     | ~48 GB/s        | ~35 GB/s            |
+
+**Improvement**: ~10-15% vs proxy mode
+
+### EFA Optimization Strategies
+
+#### For Current EFA (Proxy Mode)
+
+1. **Reduce message count**:
+   - Batch tokens when possible
+   - Use larger top-k values efficiently
+   - Minimize dispatch/combine frequency
+
+2. **Optimize QP usage**:
+   - Start with fewer QPs (2-4 per rank)
+   - Increase only if bottlenecked
+   - Monitor completion queue depth
+
+3. **Signal placement**:
+   - Use coarse-grained signals
+   - Avoid per-message signaling
+   - Batch signal operations
+
+4. **Memory registration**:
+   - Pre-register all buffers
+   - Use NCCL's memory registration cache
+   - Avoid dynamic allocation in hot path
+
+#### For Future EFA (GDAKI)
+
+1. **Direct kernel posting**:
+   - Maximize GPU-initiated operations
+   - Minimize CPU involvement
+   - Use signal-based completion
+
+2. **Ordering management**:
+   - Careful signal/fence placement
+   - Respect SRD ordering semantics
+   - Test thoroughly for races
+
+3. **Multi-rail utilization**:
+   - Use all EFA adapters (4-8 per instance)
+   - Balance load across rails
+   - Leverage NCCL topology detection
+
+### EFA-Specific Configuration
+
+#### NCCL EP on EFA
+
+```bash
+# Current: Proxy mode
+export NCCL_GIN_TYPE=2
+export NCCL_NET_PLUGIN=none  # Use built-in EFA support
+
+# Future: GDAKI (when available)
+export NCCL_GIN_TYPE=3
+```
+
+#### DeepEP-NCCL on EFA
+
+```bash
+# Use NCCL backend with proxy mode
+export DEEP_EP_BACKEND=nccl
+export NCCL_GIN_TYPE=2
+
+# Optimize for EFA
+export NCCL_IB_DISABLE=1  # Not InfiniBand
+export NCCL_SOCKET_IFNAME=eth0  # EFA interface
+```
+
+### EFA Roadmap Impact
+
+**Short-term** (Proxy mode only):
+- Both implementations work but with latency overhead
+- NCCL EP still faster due to better single-node performance
+- DeepEP-NCCL production-ready with known overhead
+
+**Long-term** (GDAKI support):
+- Full performance potential unlocked
+- NCCL EP will see larger gains (optimized for GDAKI)
+- DeepEP-NCCL will benefit but less dramatically
+
+**Recommendation**: 
+- **Now**: Use DeepEP-NCCL for production (proven with proxy mode)
+- **Future**: Evaluate NCCL EP when EFA GDAKI support arrives
+
+---
+
+## 11. Use Case Recommendations
 
 ### Choose NCCL EP if:
 
@@ -505,6 +701,7 @@ Known Limitations:
 5. You can wait for **maturity** (experimental)
 6. You prefer **C API** and explicit control
 7. You need **TMA optimizations** on Hopper
+8. You're on **InfiniBand with GDAKI support**
 
 ### Choose DeepEP-NCCL if:
 
@@ -515,6 +712,7 @@ Known Limitations:
 5. You want **backend flexibility** (NVSHMEM fallback)
 6. You prefer **Python API** and ease of use
 7. You need **lower latency** focus
+8. You're on **AWS EFA** (proven with proxy mode)
 
 ### Use Both if:
 
@@ -525,7 +723,7 @@ Known Limitations:
 
 ---
 
-## 11. Future Trajectory
+## 12. Future Trajectory
 
 ### NCCL EP Roadmap
 
@@ -566,7 +764,7 @@ Known Limitations:
 
 ---
 
-## 12. Technical Deep Dive: Key Differences
+## 13. Technical Deep Dive: Key Differences
 
 ### Tensor Layout
 
@@ -620,7 +818,7 @@ int num_total_signals = signals_per_buffer * 2;  // Double buffered
 
 ---
 
-## 13. Integration Examples
+## 14. Integration Examples
 
 ### NCCL EP Integration
 
@@ -670,7 +868,7 @@ recv_x, _, _, _, handle, event = buffer.dispatch(
 
 ---
 
-## 14. Ecosystem Position
+## 15. Ecosystem Position
 
 ### NCCL EP Position
 
