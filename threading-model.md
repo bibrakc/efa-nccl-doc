@@ -728,3 +728,38 @@ EFA Driver (kernel threads)
 - [ ] Consider real-time priorities for latency
 
 **Next**: Deep dive into RDMA and memory registration mechanisms.
+
+## OFI Plugin Lock-Free Destruction (April 2026 Update)
+
+The OFI plugin uses `shared_ptr`/`weak_ptr` for object lifetime management.
+This eliminates the previous lock ordering issues during destruction:
+
+### Previous Model (Manual Ref Counting)
+
+```
+  release_ep() held domain_lock
+    └── cascaded to release_domain() which needed device_lock
+        └── Lock ordering problem (domain_lock → device_lock)
+        └── Required skip_lock / force_cleanup boolean hacks
+```
+
+### Current Model (Smart Pointers)
+
+```
+  Destruction cascade (no locks):
+    comm destroyed → shared_ptr<ep> drops → ep destructor runs
+      → shared_ptr<domain> drops → domain destructor runs
+      → No locks needed at any point in the cascade
+
+  Locking only during lookup (get_ep, get_domain):
+    device_lock: protects domain_table during get_domain()
+    domain_lock: protects ep_table during get_ep()
+    get_ep() releases device_lock before calling domain->get_ep()
+    → No two locks held simultaneously
+```
+
+**Key improvement:** The domain_lock and device_lock are never held during
+object destruction. They are only held during table lookups (creating/finding
+endpoints and domains), which are on the connection setup path, not the data path.
+
+**Source:** [src/nccl_ofi_net.cpp](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_net.cpp) — `get_domain()`, `get_ep()`

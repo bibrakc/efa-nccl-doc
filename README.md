@@ -56,6 +56,13 @@ This documentation provides in-depth coverage of the complete stack used for GPU
 - **[freelist-allocator.md](freelist-allocator.md)** - Freelist allocator for high-performance object pooling (estimated 20-100x faster than malloc)
 - **[mr-cache-implementation.md](mr-cache-implementation.md)** - Memory registration cache implementation details (approximately 25x speedup)
 - **[nccl-buffsize-explained.md](nccl-buffsize-explained.md)** - NCCL_BUFFSIZE environment variable, channel buffers, pipelining, and performance/memory tradeoffs
+- **[nccl-message-breakdown-complete.md](nccl-message-breakdown-complete.md)** - How NCCL breaks down messages for all collective operations
+- **[nccl-chunk-breakdown.md](nccl-chunk-breakdown.md)** - Chunk size calculation, pipeline depth, and EFA MTU packetization
+
+### GIN and Expert Parallelism
+
+- **[nccl-ep-vs-deepep-comparison.md](nccl-ep-vs-deepep-comparison.md)** - NCCL EP vs DeepEP-NCCL comprehensive comparison for MoE communication
+- **[gin-alltoall-libfabric-trace.md](gin-alltoall-libfabric-trace.md)** - Libfabric call trace for GIN hybrid LSA all-to-all (16 nodes, 128 ranks)
 
 ### GPU and Accelerator Memory
 
