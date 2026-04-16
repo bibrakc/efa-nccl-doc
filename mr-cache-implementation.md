@@ -44,7 +44,7 @@ With cache (first operation registers, rest hit cache):
  * A memory registration cache entry
  * Stores one registered memory region with reference counting
  */
-typedef struct nccl_ofi_reg_entry ([include/nccl_ofi_mr.h:186-192](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi_mr.h#L186-L192)) {
+typedef struct nccl_ofi_reg_entry ([include/nccl_ofi_mr.h:186-192](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi_mr.h#L186-L192)) {
     uintptr_t addr;         // Page-aligned base address
     size_t pages;           // Number of pages covered
     int refcnt;             // Reference count (how many users)
@@ -66,7 +66,7 @@ typedef struct nccl_ofi_reg_entry ([include/nccl_ofi_mr.h:186-192](https://githu
  * Device-specific memory registration cache
  * Implemented as a sorted array (by address) for fast lookup
  */
-typedef struct nccl_ofi_mr_cache ([include/nccl_ofi_mr.h:197-205](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi_mr.h#L197-L205)) {
+typedef struct nccl_ofi_mr_cache ([include/nccl_ofi_mr.h:197-205](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi_mr.h#L197-L205)) {
     nccl_ofi_reg_entry_t **slots;  // Sorted array of entries
     size_t system_page_size;       // Page size (typically 4096)
     size_t size;                   // Total capacity (grows 2x on demand)
@@ -78,8 +78,8 @@ typedef struct nccl_ofi_mr_cache ([include/nccl_ofi_mr.h:197-205](https://github
 ```
 
 **Architecture**:
-- **Sorted Array**: Entries sorted by `addr` for binary search (O(log N) lookup)
-- **Dynamic Growth**: Doubles in size when full (starts at 1024 entries typically)
+- **Sorted Array**: Entries sorted by `addr` for linear scan lookup (O(N)).
+- **Dynamic Growth**: Doubles in size when full (starts at 128 entries, defined by `NCCL_OFI_MR_CACHE_INIT_SIZE` in [include/nccl_ofi.h:78](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi.h#L78))
 - **Statistics Tracking**: Hit/miss counts for performance monitoring
 - **Thread-Safe**: Mutex protects all operations
 
@@ -116,7 +116,7 @@ struct nccl_ofi_mr_ckey {
 
 ```cpp
 // From nccl_ofi_mr.cpp:13
-nccl_ofi_mr_cache_t *nccl_ofi_mr_cache_init( // ([src/nccl_ofi_mr.cpp:13](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_mr.cpp#L13))
+nccl_ofi_mr_cache_t *nccl_ofi_mr_cache_init( // ([src/nccl_ofi_mr.cpp:13](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_mr.cpp#L13))
                                              size_t init_num_entries,
                                              size_t mr_cache_page_size)
 {
@@ -138,7 +138,7 @@ nccl_ofi_mr_cache_t *nccl_ofi_mr_cache_init( // ([src/nccl_ofi_mr.cpp:13](https:
 
 ```cpp
 // From nccl_ofi_mr.cpp:112
-void *nccl_ofi_mr_cache_lookup_entry( // ([src/nccl_ofi_mr.cpp:112](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_mr.cpp#L112))
+void *nccl_ofi_mr_cache_lookup_entry( // ([src/nccl_ofi_mr.cpp:112](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_mr.cpp#L112))
                                       nccl_ofi_mr_cache_t *cache,
                                       nccl_ofi_mr_ckey_ref ckey,
                                       bool is_endpoint_mr)
@@ -188,7 +188,7 @@ void *nccl_ofi_mr_cache_lookup_entry( // ([src/nccl_ofi_mr.cpp:112](https://gith
 
 ```cpp
 // From nccl_ofi_mr.cpp:153
-int nccl_ofi_mr_cache_insert_entry( // ([src/nccl_ofi_mr.cpp:153](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_mr.cpp#L153))
+int nccl_ofi_mr_cache_insert_entry( // ([src/nccl_ofi_mr.cpp:153](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_mr.cpp#L153))
                                     nccl_ofi_mr_cache_t *cache,
                                     nccl_ofi_mr_ckey_ref ckey,
                                     bool is_endpoint_mr,
@@ -614,3 +614,24 @@ NCCL_OFI_INFO("Cache usage: %zu / %zu entries, hit rate: %.1f%%",
 5. Excellent target for optimization (binary search, hash table, lock-free)
 6. Different from freelist MR (user buffers vs internal buffers)
 7. Works in tandem with libfabric's own MR cache (two-level)
+
+## Current Status and Planned Improvements (April 2026)
+
+### Per-Domain Cache
+
+The MR cache is allocated per-domain, not per-device. Each domain
+(thread scope) has its own cache with its own lock. This means:
+- Different threads have separate caches (no lock contention on data path)
+- Cache created in the domain constructor
+  ([src/nccl_ofi_net.cpp](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_net.cpp))
+- Cache freed in the domain destructor
+
+### Cache Key Types
+
+The cache now supports two key types (from
+[include/nccl_ofi_mr.h](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi_mr.h)):
+
+1. **NCCL_OFI_MR_CKEY_IOVEC**: Standard memory — virtual address + length,
+   page-aligned to `mr_cache_alignment`
+2. **NCCL_OFI_MR_CKEY_DMABUF**: GPU memory via DMA-BUF — file descriptor +
+   offset + length (kernel 5.12+, used on modern GPU drivers)
