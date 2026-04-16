@@ -4,7 +4,7 @@
 
 **DMA-BUF** (DMA Buffer Sharing) is a Linux kernel framework for sharing memory buffers between different devices (GPU, NIC, camera, etc.) without copying data. For NCCL+EFA, dmabuf enables **direct GPU-to-NIC memory registration** for efficient RDMA transfers.
 
-**GitHub**: [src/nccl_ofi_dmabuf.cpp](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_dmabuf.cpp)
+**GitHub**: [src/nccl_ofi_dmabuf.cpp](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_dmabuf.cpp)
 
 ## Why DMA-BUF Matters
 
