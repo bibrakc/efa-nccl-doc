@@ -41,7 +41,7 @@ NCCL Initiates Connection:
 ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
                                  void** listenComm)
 {
-  struct nccl_ofi_listen_comm* comm = calloc(1, sizeof(*comm));  // See struct nccl_net_ofi_listen_comm (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L861-L867)
+  auto *comm = new nccl_net_ofi_listen_comm();  // C++ class, not C struct  // See struct nccl_net_ofi_listen_comm (https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi.h#L650-L656)
 
   // 1. Create libfabric endpoint
   struct fi_info* info = get_efa_info(dev);
@@ -99,7 +99,7 @@ ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
 ncclResult_t nccl_net_ofi_connect(int dev, void* handle,
                                   void** sendComm)
 {
-  struct nccl_ofi_send_comm* comm = calloc(1, sizeof(*comm));  // See struct nccl_net_ofi_send_comm (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L869-L901)
+  auto *comm = new nccl_net_ofi_send_comm();  // C++ class, not C struct  // See struct nccl_net_ofi_send_comm (https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi.h#L658-L684)
 
   // 1. Deserialize peer's address from handle
   struct nccl_ofi_handle* h = (struct nccl_ofi_handle*)handle;
@@ -150,13 +150,13 @@ ncclResult_t nccl_net_ofi_connect(int dev, void* handle,
 ncclResult_t nccl_net_ofi_accept(void* listenComm,
                                  void** recvComm)
 {
-  struct nccl_ofi_listen_comm* lcomm = listenComm;
+  nccl_net_ofi_listen_comm *lcomm = (nccl_net_ofi_listen_comm *)listenComm;
 
   // For connectionless RDM (EFA):
   // No actual connection to "accept" in libfabric
   // Just transition state
 
-  struct nccl_ofi_recv_comm* comm = calloc(1, sizeof(*comm));  // See struct nccl_net_ofi_recv_comm (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L903-L935)
+  auto *comm = new nccl_net_ofi_recv_comm();  // C++ class, not C struct  // See struct nccl_net_ofi_recv_comm (https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi.h#L686-L716)
 
   // Copy endpoint and resources from listen comm
   comm->ep = lcomm->ep;
@@ -279,11 +279,11 @@ ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data,
                                 int size, int tag,
                                 void* mhandle, void** request)
 {
-  struct nccl_ofi_send_comm* comm = sendComm;  // See struct nccl_net_ofi_send_comm (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L869-L901)
+  nccl_net_ofi_send_comm *comm = (nccl_net_ofi_send_comm *)sendComm;  // See struct nccl_net_ofi_send_comm (https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi.h#L658-L684)
   struct fid_mr* mr = mhandle;  // See struct fid_mr (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L131-L138)
 
   // === 1. Allocate Request ===
-  struct nccl_ofi_req* req = alloc_request(comm);  // See struct nccl_net_ofi_req (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L132-L134)
+  nccl_net_ofi_req *req = alloc_request(comm);  // See struct nccl_net_ofi_req (https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi.h#L126-L129)
   req->comm = comm;
   req->size = size;
   req->state = REQ_PENDING;
@@ -401,10 +401,10 @@ ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n,
                                 int* tags, void** mhandles,
                                 void** request)
 {
-  struct nccl_ofi_recv_comm* comm = recvComm;  // See struct nccl_net_ofi_recv_comm (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L903-L935)
+  nccl_net_ofi_recv_comm *comm = (nccl_net_ofi_recv_comm *)recvComm;  // See struct nccl_net_ofi_recv_comm (https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi.h#L686-L716)
 
   // === 1. Allocate Request for All Receives ===
-  struct nccl_ofi_req* req = alloc_request(comm);
+  nccl_net_ofi_req *req = alloc_request(comm);
   req->comm = comm;
   req->type = NCCL_OFI_RECV;
   req->nrecvs = n;
@@ -759,3 +759,83 @@ EFA Hardware (SRD Protocol)
 ```
 
 This protocol design allows NCCL to efficiently multiplex multiple channels over connectionless EFA transport with reliability and low overhead.
+
+## Connection Manager (CM) Module
+
+The connection establishment logic described above is now handled by a
+dedicated Connection Manager module (`src/cm/`), which separates connection
+state management from transport-specific logic.
+
+**Source files:**
+- `src/cm/nccl_ofi_cm.cpp` — Core CM logic
+- `src/cm/nccl_ofi_cm_reqs.cpp` — CM request handling
+- `src/cm/nccl_ofi_cm_resources.cpp` — CM resource management
+- `include/cm/nccl_ofi_cm.h` — CM interface ([view](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/cm/nccl_ofi_cm.h))
+
+**Key classes:**
+- `nccl_ofi_cm` — Creates connectors, receivers, and listeners
+- `nccl_ofi_cm_send_connector` — Active side: sends connect request via `fi_tsend`, waits for response
+- `nccl_ofi_cm_receiver` — Passive side: receives connect request via `fi_trecv`, sends response
+- `nccl_ofi_cm_listener` — Listens for incoming connection requests
+
+The CM uses libfabric tagged messaging for the handshake. Connect request
+and response messages carry endpoint addresses and transport-specific
+metadata (e.g., RDMA rail addresses, control mailbox info).
+
+## GIN Protocol
+
+GIN (Group Interconnect Network) provides one-sided put operations for
+GPU-initiated networking workloads like DeepEP. It wraps the RDMA
+transport and adds group communication (all-ranks-to-all-ranks).
+
+**Source files:**
+- `src/rdma/gin/nccl_ofi_gin_api.cpp` — GIN plugin API ([view](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/rdma/gin/nccl_ofi_gin_api.cpp))
+- `src/rdma/gin/nccl_ofi_gin.cpp` — Bootstrap ring connection ([view](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/rdma/gin/nccl_ofi_gin.cpp))
+- `src/rdma/gin/nccl_ofi_gin_resources.cpp` — Resource management
+- `src/rdma/gin/nccl_ofi_gin_reqs.cpp` — Request handling (iput, iputSignal)
+- `src/rdma/gin/nccl_ofi_gin_allgather.cpp` — AllGather for handle exchange
+
+### GIN Connection Establishment
+
+Unlike standard Net connections (point-to-point), GIN establishes a
+group communicator where all ranks can put data to all other ranks:
+
+```
+  1. listen(ctx, dev, handle, &listenComm)
+     └── Creates RDMA endpoint, wraps in nccl_ofi_rdma_gin_listen_comm
+
+  2. connect(ctx, handles[], nranks, rank, listenComm, &collComm)
+     ├── Step 1: Bootstrap ring
+     │   ├── RDMA connect to rank (rank+1) % nranks
+     │   └── RDMA accept from rank (rank-1+nranks) % nranks
+     │
+     ├── Step 2: Create GIN resources on the endpoint
+     │   └── nccl_ofi_gin_resources (ep_holder, gin_ep, freelists)
+     │
+     ├── Step 3: AllGather connection handles via bootstrap ring
+     │   └── Each rank sends its GIN endpoint addresses to all others
+     │
+     └── Step 4: Return nccl_ofi_rdma_gin_put_comm
+         └── Contains per-peer state for iput/iputSignal
+
+  3. iput(collComm, srcOff, srcMh, size, dstOff, dstMh, rank, &req)
+     └── fi_write() to remote rank's symmetric registered memory
+
+  4. iputSignal(collComm, srcOff, srcMh, size, dstOff, dstMh,
+               rank, signalOff, signalMh, value, op, &req)
+     └── fi_write() for data + atomic signal operation on remote rank
+
+  5. ginProgress(collComm)
+     └── fi_cq_read() on all rails, process completions
+```
+
+### GIN vs Standard Net Protocol
+
+| Aspect | Standard Net | GIN |
+|--------|-------------|-----|
+| Connection model | Point-to-point (pairs) | Group (all-to-all) |
+| Data transfer | fi_tsend/fi_trecv or fi_write | fi_write only (one-sided) |
+| Notification | Completion queue or tag match | Atomic signal increment |
+| Bootstrap | CM handshake (2 messages) | Ring connect + AllGather |
+| Use case | NCCL collectives | DeepEP MoE dispatch |
+| API | ncclNet_v11_t | ncclGin_v11_t |
