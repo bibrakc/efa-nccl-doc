@@ -2,9 +2,15 @@
 
 ## Overview
 
-The OFI (OpenFabrics Interfaces) NCCL plugin (`aws-ofi-nccl`) provides a network transport for NCCL using libfabric. It implements NCCL's network plugin interface (`ncclNet_t`) and is the primary way NCCL communicates over AWS EFA.
+The OFI (OpenFabrics Interfaces) NCCL plugin (`aws-ofi-nccl`) provides a network transport for NCCL using libfabric. It implements both NCCL's network plugin interface (`ncclNet_v11_t`) and the GIN plugin interface (`ncclGin_v11_t`), and is the primary way NCCL communicates over AWS EFA.
 
 **Repository**: https://github.com/aws/aws-ofi-nccl
+
+The plugin is written in C++ and organized as a class hierarchy
+(`plugin_t` → `device_t` → `domain_t` → `ep_t` → communicators) with
+`shared_ptr`/`weak_ptr` ownership for automatic resource management.
+It supports three transports: RDMA (P5+), SendRecv (P4d), and GIN
+(wraps RDMA for one-sided put operations used by DeepEP/MoE workloads).
 
 ## AWS Instance Types and Protocol Support
 
@@ -25,15 +31,33 @@ The OFI plugin supports different communication protocols based on instance capa
 | p5e.48xlarge | 8×H100 | 32 EFAs | 3200 Gbps | 400 Gbps | **RDMA + Send/Recv** | 75 μs | EFAv2 |
 | p5en.48xlarge | 8×H200 | 32 EFAs | 3200 Gbps | 400 Gbps | **RDMA + Send/Recv** | 35 μs | **EFAv3**, 35% lower latency |
 
+### P6 Series and Beyond (B200/GB200 GPUs)
+
+| Instance | GPUs | Protocol | Latency | Notes |
+|----------|------|----------|---------|-------|
+| p6-b200 | 8×B200 | **RDMA** | 35 μs | EFAv3, NETDEVS_POLICY=max:1 |
+| p6e-gb200+ | GB200+ | **RDMA** | 35 μs | Catch-all for future P-series (regex `^p([5-9]\|[0-9]{2,}).*`) |
+
+### Other EFA-Capable Instances
+
+| Instance | GPUs | Protocol | Latency | Notes |
+|----------|------|----------|---------|-------|
+| g7e (12xl+) | 1-4×L40S | **RDMA** | 35 μs | Inference workloads |
+| trn1/trn2 | Trainium | **RDMA** | 75 μs | AWS Neuron |
+
 **Key Differences:**
 - **p4d/p4de**: Use send/recv protocol only (tagged messaging). RDMA write is emulated, not native.
-- **p5/p5e/p5en**: Support native RDMA write for improved performance. Plugin defaults to RDMA protocol.
+- **p5/p5e**: Support native RDMA write. Plugin defaults to RDMA protocol. EFAv2, 75 μs latency.
+- **p5en/p6**: EFAv3 with 35 μs latency. Uses `NCCL_NETDEVS_POLICY=max:1` for optimal GPU-NIC pairing.
+- **p6e-gb200+**: Catch-all regex matches future P-series instances with same RDMA defaults.
 - **Multi-rail**: Each GPU can use 4 EFA adapters (p4d: 4×100G, p5+: sharing 32 total EFAs across 8 GPUs)
 
-**Protocol Selection** ([src/platform-aws.cpp](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/platform-aws.cpp#L81-L259)):
+**Protocol Selection** ([src/platform-aws.cpp:81-250](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/platform-aws.cpp#L81-L250)):
 ```cpp
 // P4d/P4de: default_protocol = PROTOCOL::SENDRECV
-// P5/P5e/P5en: default_protocol = PROTOCOL::RDMA
+// P5/P5e:   default_protocol = PROTOCOL::RDMA     (latency = 75.0)
+// P5en/P6:  default_protocol = PROTOCOL::RDMA     (latency = 35.0)
+// P6e-GB200+: default_protocol = PROTOCOL::RDMA   (catch-all for future P-series)
 ```
 
 ## Architecture
@@ -66,54 +90,62 @@ The OFI plugin supports different communication protocols based on instance capa
 
 ## ncclNet_t Interface Implementation
 
-The plugin implements all functions in the `ncclNet_t` interface:
+The plugin implements all functions in the `ncclNet_v11_t` interface (previously `ncclNet_t`).
+The API layer is in `src/nccl_ofi_api.cpp`, which dispatches to transport-specific
+implementations in `src/nccl_ofi_rdma.cpp` (RDMA) or `src/nccl_ofi_sendrecv.cpp` (SendRecv).
 
 ### Initialization
 
-**`nccl_net_ofi_init()`** ([src/nccl_ofi_net.c:1849](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1849)):
+**`nccl_net_ofi_init()`** ([src/nccl_ofi_api.cpp:58](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L58)):
 
-```c
+```cpp
 ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 {
-  // Initialize libfabric
-  fi_getinfo(..., &ofi_info);  // See fi_getinfo() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L315)
+  // Initialize environment variable system
+  ofi_nccl_parameters_init();
 
-  // Discover available devices (EFA adapters)
-  // Setup domain, fabric, etc.
+  // Create plugin: queries libfabric (fi_getinfo), discovers EFA adapters,
+  // builds topology, selects transport (RDMA or SendRecv based on platform)
+  nccl_net_ofi_create_plugin(&plugin);  // See src/nccl_ofi_net.cpp
 
-  // Initialize plugin state
+  // Plugin probes each device by creating a test endpoint
+  // (get_ep → creates domain + ep, then releases)
+  plugin->complete_init();
+
   return ncclSuccess;
 }
 ```
 
 **Actions:**
-- Query libfabric for EFA providers
-- Enumerate EFA devices (NICs)
-- Create plugin-global state
+- Initialize environment variable system (`ofi_nccl_parameters_init`)
+- Query libfabric for EFA providers (`fi_getinfo`)
+- Build topology from discovered NICs
+- Select transport (RDMA or SendRecv) based on platform type
+- Create plugin object with device array
+- Probe each device by creating a test endpoint
 - Setup logging
 
 ### Device Discovery
 
-**`nccl_net_ofi_devices()` / `nccl_net_ofi_getProperties()`** ([src/nccl_ofi_net.c:1903](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1903), [src/nccl_ofi_net.c:1911](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1911)):
+**`nccl_net_ofi_devices()` / `nccl_net_ofi_get_properties()`** ([src/nccl_ofi_api.cpp:111](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L111), [src/nccl_ofi_api.cpp:129](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L129)):
 
-```c
-ncclResult_t nccl_net_ofi_devices(int* ndev)
+```cpp
+ncclResult_t nccl_net_ofi_devices(int *num_devices)
 {
-  *ndev = num_efa_devices;
+  *num_devices = plugin->get_num_devices();
   return ncclSuccess;
 }
 
-ncclResult_t nccl_net_ofi_getProperties(int dev,
-                                        ncclNetProperties_t* props)
+ncclResult_t nccl_net_ofi_get_properties(int dev_id,
+                                         nccl_ofi_properties_t *ofi_properties)
 {
-  props->name = "AWS EFA";
-  props->pciPath = pci_path[dev];
-  props->guid = device_guid[dev];
-  props->ptrSupport = NCCL_PTR_HOST | NCCL_PTR_CUDA;
-  props->speed = 100000; // 100 Gbps
-  props->port = 0;
-  props->maxComms = MAX_COMMS;
-  return ncclSuccess;
+  // Get device object from plugin (C++ class hierarchy)
+  nccl_net_ofi_device_t *device = plugin->get_device(dev_id);
+
+  // Virtual dispatch to transport-specific implementation
+  // (RDMA or SendRecv device overrides get_properties)
+  int ret = device->get_properties(ofi_properties);
+  return nccl_net_ofi_retval_translate_impl(ret);
 }
 ```
 
@@ -125,15 +157,40 @@ ncclResult_t nccl_net_ofi_getProperties(int dev,
 
 ### Connection Establishment
 
+Connection establishment uses the Connection Manager (CM) module (`src/cm/`).
+The process is a multi-call state machine — NCCL calls connect/accept
+repeatedly until the connection is established.
+
 #### Listener (Passive Side)
 
-**`nccl_net_ofi_listen()`** ([src/nccl_ofi_net.c:1262](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1262)):
+**`nccl_net_ofi_listen()`** ([src/nccl_ofi_api.cpp:150](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L150)):
 
-```c
-ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
-                                 void** listenComm)
+```cpp
+ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle,
+                                 void **lComm,
+                                 unsigned int domain_key,
+                                 unsigned int resource_key)
 {
-  // Create endpoint
+  nccl_net_ofi_device_t *device = plugin->get_device(dev_id);
+
+  // Get or create endpoint via shared_ptr (lazy creation)
+  // domain_key selects the domain, tid selects the endpoint within it
+  std::shared_ptr<nccl_net_ofi_ep_t> ep =
+      device->get_ep(domain_key, nccl_net_ofi_gettid());
+
+  // Virtual dispatch to transport-specific listen
+  // (creates listen_comm, gets local address via fi_getname)
+  ret = ep->listen(handle, listen_comm);
+
+  // Store shared_ptr<ep> on listen_comm to keep endpoint alive
+  (*listen_comm)->ep = ep;
+}
+```
+
+Inside the transport-specific `ep->listen()`, the following libfabric calls happen:
+
+```cpp
+  // Create endpoint (if not already created for this thread)
   fi_endpoint(domain, info, &ep, NULL);  // See fi_endpoint() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_endpoint.h#L182)
 
   // Bind to completion queue
@@ -145,7 +202,7 @@ ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
   // Get local address
   fi_getname(ep, &local_addr, &addrlen);  // See fi_getname() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_cm.h#L154)
 
-  // Return address in handle (for sharing)
+  // Return address in handle (for sharing via NCCL bootstrap)
   memcpy(handle, &local_addr, addrlen);
 
   *listenComm = comm_state;
@@ -155,42 +212,69 @@ ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
 
 #### Connector (Active Side)
 
-**`nccl_net_ofi_connect()`** ([src/nccl_ofi_net.c:1365](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1365)):
+**`nccl_net_ofi_connect()`** ([src/nccl_ofi_api.cpp:220](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L220)):
 
-```c
-ncclResult_t nccl_net_ofi_connect(int dev, void* handle,
-                                  void** sendComm)
+This is a **multi-call state machine**. NCCL calls connect() repeatedly until
+`sendComm != NULL`. On the first call, the endpoint and send_comm are created.
+On subsequent calls, the existing comm is retrieved from the handle's state.
+
+```cpp
+ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle,
+                                  void **sComm, int trafficClass,
+                                  unsigned int domain_key,
+                                  unsigned int resource_key)
 {
-  // Create endpoint
-  fi_endpoint(domain, info, &ep, NULL);  // See fi_endpoint() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_endpoint.h#L182)
+  nccl_net_ofi_conn_handle_t *ofi_handle = (nccl_net_ofi_conn_handle_t *)handle;
 
-  // Bind to CQ
-  fi_ep_bind(ep, cq, 0);
-  fi_enable(ep);
+  std::shared_ptr<nccl_net_ofi_ep_t> ep;
 
+  if (ofi_handle->state.comm == nullptr) {
+    // First call: get or create endpoint
+    nccl_net_ofi_device_t *device = plugin->get_device(dev_id);
+    ep = device->get_ep(domain_key, nccl_net_ofi_gettid());
+  } else {
+    // Subsequent calls: reuse ep from the comm created on first call
+    ep = ofi_handle->state.comm->ep;
+  }
+
+  // Virtual dispatch to transport-specific connect
+  // (CM sends connect request, waits for response)
+  ret = ep->connect(handle, send_comm, trafficClass);
+
+  // ep shared_ptr drops on scope exit. No manual release needed —
+  // the comm holds its own shared_ptr<ep> to keep the endpoint alive.
+}
+```
+
+Inside the transport-specific `ep->connect()`:
+```cpp
   // Extract remote address from handle
   memcpy(&remote_addr, handle, addrlen);
 
-  // Store for future sends
-  comm->remote_addr = fi_av_insert(av, &remote_addr, 1, ...);  // See fi_av_insert() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_cm.h#L206)
+  // Insert remote address into address vector
+  fi_av_insert(av, &remote_addr, 1, ...);  // See fi_av_insert() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_cm.h#L206)
 
-  *sendComm = comm_state;
-  return ncclSuccess;
-}
+  // CM: send connect request message to peer
+  // CM: wait for connect response (may return incomplete on first call)
 ```
 
 #### Accept (Complete Passive Connection)
 
-**`nccl_net_ofi_accept()`** ([src/nccl_ofi_net.c:1537](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1537)):
+**`nccl_net_ofi_accept()`** ([src/nccl_ofi_api.cpp:294](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L294)):
 
-```c
-ncclResult_t nccl_net_ofi_accept(void* listenComm,
-                                 void** recvComm)
+Also a multi-call state machine. The CM module handles the handshake:
+
+```cpp
+ncclResult_t nccl_net_ofi_accept(void *lComm, void **rComm)
 {
-  // Connection already established (libfabric is connectionless for EFA)
-  // Just return state
-  *recvComm = comm_state;
-  return ncclSuccess;
+  nccl_net_ofi_listen_comm *l_comm = (nccl_net_ofi_listen_comm *)lComm;
+
+  // Virtual dispatch to transport-specific accept
+  // CM: receive connect request, create recv_comm, send response
+  ret = l_comm->accept(&r_comm);
+
+  // r_comm->ep is set from l_comm->ep (shared_ptr copy)
+  // This keeps the endpoint alive for the recv_comm
 }
 ```
 
@@ -198,48 +282,83 @@ ncclResult_t nccl_net_ofi_accept(void* listenComm,
 
 ### Memory Registration
 
-**`nccl_net_ofi_regMr()`** ([src/nccl_ofi_net.c:724](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L724)):
+**`nccl_net_ofi_regMrDmaBuf()`** ([src/nccl_ofi_api.cpp:329](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L329)):
 
-```c
-ncclResult_t nccl_net_ofi_regMr(void* comm, void* data,
-                                int size, int type,
-                                void** mhandle)
+The plugin now uses a unified registration function that handles both standard
+memory (iovec) and GPU memory via DMA-BUF. Registration is dispatched to the
+transport-specific comm (send or recv), which uses the per-domain MR cache.
+
+```cpp
+ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
+                                       int type, uint64_t offset,
+                                       int fd, void** mhandle)
 {
-  // Check cache first
-  if (find_in_cache(data, size, &mr)) {
-    *mhandle = mr;
-    return ncclSuccess;
+  nccl_net_ofi_comm *base_comm = (nccl_net_ofi_comm *)comm;
+
+  // Build cache key — supports two memory types:
+  //   fd == -1: standard memory (iovec with address + length)
+  //   fd >= 0:  GPU memory via DMA-BUF (fd + offset + length)
+  const nccl_ofi_mr_ckey_t cache_key = (fd == -1)
+      ? nccl_ofi_mr_ckey_mk_vec(data, size, base_comm->ep.get())
+      : nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data, base_comm->ep.get());
+
+  // Virtual dispatch to transport-specific regMr
+  // (checks MR cache first, calls fi_mr_reg on miss)
+  switch (base_comm->type) {
+    case NCCL_NET_OFI_SEND_COMM:
+      ret = ((nccl_net_ofi_send_comm *)base_comm)->regMr(&cache_key, type, mhandle);
+      break;
+    case NCCL_NET_OFI_RECV_COMM:
+      ret = ((nccl_net_ofi_recv_comm *)base_comm)->regMr(&cache_key, type, mhandle);
+      break;
   }
-
-  // Register with libfabric
-  uint64_t access = FI_SEND | FI_RECV | FI_REMOTE_READ | FI_REMOTE_WRITE;
-
-  if (type == NCCL_PTR_CUDA) {
-    // GPU memory
-    ret = fi_mr_reg(domain, data, size, access,  // See fi_mr_reg() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413)
-                    0, 0, FI_HMEM_CUDA, &mr, NULL);
-  } else {
-    // Host memory
-    ret = fi_mr_reg(domain, data, size, access,
-                    0, 0, 0, &mr, NULL);
-  }
-
-  // Add to cache
-  add_to_cache(data, size, mr);
-
-  *mhandle = mr;
-  return ncclSuccess;
 }
 ```
 
-**Registration Cache:**
-```c
-struct mr_cache {
-  void* addr;
-  size_t size;
-  struct fid_mr* mr;
-  int refcount;
-  struct mr_cache* next;
+Inside the transport-specific `regMr()`, the MR cache is consulted:
+
+```cpp
+  // 1. Check cache (per-domain, sorted array by page-aligned address)
+  handle = nccl_ofi_mr_cache_lookup_entry(domain->mr_cache, &cache_key, endpoint_mr);
+  if (handle) return handle;  // Cache hit — refcount incremented
+
+  // 2. Cache miss — register with libfabric
+  fi_mr_regattr(domain, &mr_attr, flags, &mr);  // See fi_mr_reg() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413)
+
+  // 3. Insert into cache
+  nccl_ofi_mr_cache_insert_entry(domain->mr_cache, &cache_key, endpoint_mr, handle);
+```
+
+**Registration Cache** ([include/nccl_ofi_mr.h](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi_mr.h)):
+```cpp
+// Cache entry — one per registered memory region
+typedef struct nccl_ofi_reg_entry {
+    uintptr_t addr;         // Page-aligned base address
+    size_t pages;           // Number of pages covered
+    int refcnt;             // Reference count (shared registrations)
+    void *handle;           // fi_mr handle from libfabric
+    nccl_net_ofi_ep_t *ep;  // Endpoint that owns this MR (for endpoint-specific MRs)
+} nccl_ofi_reg_entry_t;
+
+// Cache structure — sorted array for containment lookup
+typedef struct nccl_ofi_mr_cache {
+    nccl_ofi_reg_entry_t **slots;  // Sorted array of entries (by address)
+    size_t system_page_size;       // Page size (typically 4096)
+    size_t size;                   // Allocated capacity (grows 2x)
+    size_t used;                   // Current number of entries
+    uint32_t hit_count;            // Statistics: cache hits
+    uint32_t miss_count;           // Statistics: cache misses
+    pthread_mutex_t lock;          // Thread-safe access
+} nccl_ofi_mr_cache_t;
+
+// Cache key — supports iovec and DMA-BUF memory types
+struct nccl_ofi_mr_ckey {
+    union {
+        struct iovec iovec;                // Standard memory (virtual address + length)
+        struct fi_mr_dmabuf fi_mr_dmabuf;  // GPU memory via DMA-BUF (fd + offset + length)
+    };
+    nccl_net_ofi_ep_t *ep;                 // Endpoint (part of key for endpoint-specific MRs)
+    enum nccl_ofi_mr_ckey_type type;       // NCCL_OFI_MR_CKEY_IOVEC or NCCL_OFI_MR_CKEY_DMABUF
 };
 ```
 
@@ -252,38 +371,38 @@ struct mr_cache {
 
 ### Send Operations
 
-**`nccl_net_ofi_isend()`** ([src/nccl_ofi_net.c:1054](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1054)):
+**`nccl_net_ofi_isend()`** ([src/nccl_ofi_api.cpp:441](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L441)):
 
-```c
+The API layer casts the comm and dispatches to the transport-specific `send()` virtual method:
+
+```cpp
 ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data,
-                                int size, int tag,
+                                size_t size, int tag,
                                 void* mhandle, void** request)
 {
-  struct nccl_ofi_send_comm* comm = sendComm;  // See struct nccl_net_ofi_send_comm (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L869-L901)
-  struct fid_mr* mr = mhandle;
+  nccl_net_ofi_send_comm *send_comm = (nccl_net_ofi_send_comm *)sendComm;
+  nccl_net_ofi_mr_handle_t *handle = (nccl_net_ofi_mr_handle_t *)mhandle;
+  nccl_net_ofi_req **base_req = (nccl_net_ofi_req **)request;
 
-  // Allocate request tracking
-  struct nccl_ofi_req* req = get_request();  // See struct nccl_net_ofi_req (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L132-L134)
-  req->comm = comm;
-  req->size = size;
-  req->state = REQ_PENDING;
+  // Virtual dispatch to transport-specific send
+  int ret = send_comm->send(data, size, tag, handle, base_req);
+  return nccl_net_ofi_retval_translate_impl(ret);
+}
+```
 
-  // Get memory descriptor
+Inside the transport-specific `send()` (e.g., RDMA or SendRecv):
+
+```cpp
+  // Get memory descriptor for the registered region
   void* desc = fi_mr_desc(mr);  // See fi_mr_desc() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L147)
 
-  // Post send operation
-  // Use fi_tsend for tagged messaging (tag identifies channel/operation)
-  ret = fi_tsend(comm->ep, data, size, desc,  // See fi_tsend() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L121)
-                 comm->remote_addr, tag, req);
+  // Post tagged send operation (tag identifies channel/operation)
+  ret = fi_tsend(ep, data, size, desc,  // See fi_tsend() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L121)
+                 remote_addr, tag, &context);
 
   if (ret == -FI_EAGAIN) {
-    // Queue is full, retry later
-    queue_request(req);
+    // Provider queue full — progress CQ and retry
   }
-
-  *request = req;
-  return ncclSuccess;
-}
 ```
 
 **Tagged Send:**
@@ -293,83 +412,77 @@ ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data,
 
 ### Receive Operations
 
-**`nccl_net_ofi_irecv()`** ([src/nccl_ofi_net.c:1132](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1132)):
+**`nccl_net_ofi_irecv()`** ([src/nccl_ofi_api.cpp:471](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L471)):
 
-```c
+```cpp
 ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n,
-                                void** data, int* sizes,
+                                void** data, size_t* sizes,
                                 int* tags, void** mhandles,
                                 void** request)
 {
-  struct nccl_ofi_recv_comm* comm = recvComm;  // See struct nccl_net_ofi_recv_comm (https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi.h#L903-L935)
+  nccl_net_ofi_recv_comm *recv_comm = (nccl_net_ofi_recv_comm *)recvComm;
 
-  // NCCL can post multiple receives at once (up to n)
-  struct nccl_ofi_req* req = get_request();
-  req->nrecvs = n;
-
-  for (int i = 0; i < n; i++) {
-    struct fid_mr* mr = mhandles[i];
-    void* desc = fi_mr_desc(mr);
-
-    // Pre-post receives
-    ret = fi_trecv(comm->ep, data[i], sizes[i], desc,  // See fi_trecv() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L98)
-                   FI_ADDR_UNSPEC, tags[i], 0, req);
-
-    if (ret < 0) {
-      // Handle error
-    }
-  }
-
-  *request = req;
-  return ncclSuccess;
+  // Virtual dispatch — NCCL can post multiple receives at once (up to n)
+  int ret = recv_comm->recv(n, data, sizes, tags, mr_handles, base_req);
 }
+```
+
+Inside the transport-specific `recv()`:
+
+```cpp
+  for (int i = 0; i < n; i++) {
+    void* desc = fi_mr_desc(mr_handles[i]);
+
+    // Pre-post tagged receives
+    ret = fi_trecv(ep, data[i], sizes[i], desc,  // See fi_trecv() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L98)
+                   FI_ADDR_UNSPEC, tags[i], 0, &context);
+  }
 ```
 
 **Pre-posting:**
 - Receives posted before data arrives
-- Matched when sender transmits
-- Reduces latency
+- Matched when sender transmits with matching tag
+- Reduces latency by having buffers ready
 
 ### Flush Operations (RDMA Write Completion)
 
-**`nccl_net_ofi_iflush()`** ([src/nccl_ofi_net.c:1176](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1176)):
+**`nccl_net_ofi_iflush()`** ([src/nccl_ofi_api.cpp:537](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L537)):
 
-```c
-ncclResult_t nccl_net_ofi_iflush(void* recvComm, int n,
-                                 void** data, int* sizes,
+```cpp
+ncclResult_t nccl_net_ofi_iflush(void* rComm, int n,
+                                 void** buffers, int* sizes,
                                  void** mhandles, void** request)
 {
-  // For RDMA write semantics
-  // Ensures remote writes are visible
+  nccl_net_ofi_recv_comm *recv_comm = (nccl_net_ofi_recv_comm *)rComm;
 
-  struct nccl_ofi_req* req = get_request();
-
-  // EFA: Issue read operation to ensure ordering
-  // (Write followed by read ensures write completion)
-  for (int i = 0; i < n; i++) {
-    fi_read(comm->ep, flush_buf, 0, NULL,
-            comm->remote_addr, 0, 0, req);
-  }
-
-  *request = req;
-  return ncclSuccess;
+  // Virtual dispatch to transport-specific flush
+  int ret = recv_comm->flush(n, buffers, sizes, mr_handles, base_req);
 }
 ```
 
+Inside the RDMA transport flush:
+
+```cpp
+  // Issue a small RDMA read as an ordering fence
+  // The read completion guarantees all prior writes are visible
+  fi_read(ep, flush_buf, flush_size, desc,
+          remote_addr, 0, 0, &context);
+```
+
 **Why Flush:**
-- RDMA writes are one-sided (no remote notification)
-- Flush ensures write is visible to receiver
-- EFA: Use dummy read for ordering
+- RDMA writes are one-sided (no remote CPU notification)
+- Flush ensures write is visible to receiver's GPU
+- EFA: Uses a small `fi_read()` as an ordering fence
+- On P5+, `NCCL_NET_FORCE_FLUSH=0` means NCCL only flushes when necessary
 
 ### Completion Testing
 
-**`nccl_net_ofi_test()`** ([src/nccl_ofi_net.c:991](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L991)):
+**`nccl_net_ofi_test()`** ([src/nccl_ofi_api.cpp:524](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L524)):
 
-```c
-ncclResult_t nccl_net_ofi_test(void* request, int* done,
-                               int* size)
+```cpp
+ncclResult_t nccl_net_ofi_test(void* request, int* done, int* size)
 {
-  struct nccl_ofi_req* req = request;
+  nccl_net_ofi_req *req = (nccl_net_ofi_req *)request;
 
   // Poll completion queue
   struct fi_cq_data_entry cq_entry;  // See struct fi_cq_data_entry (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L215-L220)
@@ -410,33 +523,49 @@ ncclResult_t nccl_net_ofi_test(void* request, int* done,
 
 ### Cleanup
 
-**`nccl_net_ofi_deregMr()` / `nccl_net_ofi_close()`** ([src/nccl_ofi_net.c:796](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L796), [src/nccl_ofi_net.c:1809](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_net.c#L1809)):
+**`nccl_net_ofi_deregMr()`** ([src/nccl_ofi_api.cpp:399](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L399)):
 
-```c
-ncclResult_t nccl_net_ofi_deregMr(void* comm, void* mhandle)
+```cpp
+ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 {
-  struct fid_mr* mr = mhandle;
+  nccl_net_ofi_comm *base_comm = (nccl_net_ofi_comm *)comm;
 
-  // Decrement refcount in cache
-  if (decref_cache(mr) == 0) {
-    // Last reference, actually deregister
-    fi_close(&mr->fid);  // See fi_close() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L150)
-    remove_from_cache(mr);
+  // Virtual dispatch to transport-specific deregMr
+  // Decrements refcount in MR cache; if refcount reaches 0:
+  //   fi_close(&mr->fid)  // See fi_close() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L150)
+  //   remove entry from cache
+  switch (base_comm->type) {
+    case NCCL_NET_OFI_SEND_COMM:
+      ret = send_comm->deregMr(mr_handle);
+      break;
+    case NCCL_NET_OFI_RECV_COMM:
+      ret = recv_comm->deregMr(mr_handle);
+      break;
   }
-
-  return ncclSuccess;
 }
+```
 
-ncclResult_t nccl_net_ofi_close(void* comm)
+**`nccl_net_ofi_closeSend()` / `nccl_net_ofi_closeRecv()` / `nccl_net_ofi_closeListen()`**:
+
+With the shared_ptr ownership model, closing a comm drops the `shared_ptr<ep>`.
+If this was the last comm using the endpoint, the ep destructor runs automatically,
+closing all libfabric resources (fi_endpoint, fi_cq, fi_av). No manual
+`release_ep()` or `release_domain()` calls are needed.
+
+```cpp
+ncclResult_t nccl_net_ofi_closeSend(void *sComm)
 {
-  // Close endpoint
-  fi_close(&comm->ep->fid);
+  nccl_net_ofi_send_comm *send_comm = (nccl_net_ofi_send_comm *)sComm;
 
-  // Close CQ
-  fi_close(&comm->cq->fid);
+  // Virtual dispatch to transport-specific close
+  // Frees comm resources (freelists, request pools)
+  int ret = send_comm->close();
 
-  // Free state
-  free(comm);
+  // send_comm destructor drops shared_ptr<ep>
+  // → if last comm: ep destructor runs → domain destructor runs
+  delete send_comm;
+}
+```
 
   return ncclSuccess;
 }
@@ -492,7 +621,7 @@ Modern instances can use different EFA aggregations:
 - Expose each EFA as separate device to NCCL
 - NCCL distributes channels across devices
 - Aggregate bandwidth increases linearly with NICs
-- Plugin handles rail reordering for optimal pairing ([src/platform-aws.cpp:983](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/platform-aws.cpp#L983))
+- Plugin handles rail reordering for optimal pairing ([src/platform-aws.cpp:983](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/platform-aws.cpp#L973))
 
 **Configuration:**
 ```bash
@@ -702,6 +831,226 @@ struct fi_cq_attr cq_attr = {
   .format = FI_CQ_FORMAT_DATA,
 };
 ```
+
+
+## C++ Class Hierarchy and Object Ownership
+
+The plugin uses a C++ class hierarchy with smart pointer ownership for
+automatic lifetime management. This was introduced to replace manual
+reference counting (`release_ep()`, `release_domain()`) which had complex
+conditional logic, lock ordering issues, and `delete this` patterns.
+
+### Class Hierarchy
+
+```
+nccl_net_ofi_plugin_t                    (singleton, one per process)
+  │  Owns devices via raw pointers (plugin always outlives devices)
+  │  Created during init(), destroyed during finalize()
+  │  Source: include/nccl_ofi.h, src/nccl_ofi_net.cpp
+  │
+  └── nccl_net_ofi_device_t              (one per NIC / multi-rail group)
+        │  Holds: fi_info, device properties, comm ID pool
+        │  Caches domains: domain_table (map<key, weak_ptr<domain>>)
+        │  Source: include/nccl_ofi.h
+        │
+        │  Transport subclasses:
+        │  ├── nccl_net_ofi_rdma_device_t     (include/nccl_ofi_rdma.h)
+        │  └── nccl_net_ofi_sendrecv_device_t (include/nccl_ofi_sendrecv.h)
+        │
+        └── nccl_net_ofi_domain_t            (one per thread scope)
+              │  Holds: fi_domain, fi_av, fi_cq, MR cache, MR key pool
+              │  Caches endpoints: ep_table (map<key, weak_ptr<ep>>)
+              │  Inherits: enable_shared_from_this<domain>
+              │  Source: include/nccl_ofi.h
+              │
+              └── nccl_net_ofi_ep_t          (one per thread)
+                    │  Holds: fi_endpoint, rx_buffers, ep_lock
+                    │  Inherits: enable_shared_from_this<ep>
+                    │  Source: include/nccl_ofi.h
+                    │
+                    └── nccl_net_ofi_comm     (listen/send/recv)
+                          Holds: shared_ptr<ep>, dev_id, type
+                          Source: include/nccl_ofi.h
+```
+
+### Ownership Model
+
+```
+  Ownership chain (shared_ptr):
+    comm ──shared_ptr──> ep ──shared_ptr──> domain ──raw ptr──> device
+
+  Cache tables (weak_ptr, non-owning):
+    device.domain_table: map<key, weak_ptr<domain>>
+    domain.ep_table:     map<key, weak_ptr<ep>>
+```
+
+**Rules:**
+- Comms are the real owners of endpoints (via `shared_ptr<ep>`)
+- Endpoints are the real owners of domains (via `shared_ptr<domain>`)
+- Tables are non-owning caches — they hold `weak_ptr` for lookup only
+- When the last comm drops its `shared_ptr<ep>`, the ep destructor runs
+- The ep destructor drops `shared_ptr<domain>`, potentially triggering domain cleanup
+- No locks are needed during this destruction cascade
+
+### Lazy Cleanup Pattern
+
+The `get_ep()` and `get_domain()` functions use a lazy cleanup pattern
+([src/nccl_ofi_net.cpp](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_net.cpp)):
+
+```cpp
+// domain_t::get_ep(endpoint_key)
+shared_ptr<ep> get_ep(long key) {
+    lock_guard(domain_lock);
+
+    auto iter = ep_table.find(key);
+    if (iter != ep_table.end()) {
+        auto ep_ptr = iter->second.lock();  // promote weak_ptr
+        if (ep_ptr) return ep_ptr;          // cache hit: still alive
+        ep_table.erase(iter);               // expired: clean up stale entry
+    }
+
+    // Cache miss: purge other expired entries to prevent unbounded growth
+    // (important for GIN which keys by comm_id, not fixed thread ID)
+    for (auto it = ep_table.begin(); it != ep_table.end();)
+        it->second.expired() ? it = ep_table.erase(it) : ++it;
+
+    // Create new endpoint, insert weak_ptr, return shared_ptr
+    auto *raw_ep = create_endpoint();
+    shared_ptr<ep> ep_ptr(raw_ep);
+    ep_table.insert({key, ep_ptr});
+    return ep_ptr;
+}
+```
+
+### Destruction Cascade
+
+```
+  Last comm destroyed
+    └── shared_ptr<ep> drops → ep refcount hits 0
+          └── ep destructor runs
+                ├── Closes fi_endpoint, frees rx_buffers, destroys mutex
+                └── shared_ptr<domain> drops → domain refcount hits 0
+                      └── domain destructor runs
+                            ├── Checks for leaked eps (live weak_ptrs = bug)
+                            ├── Clears ep_table
+                            ├── Closes fi_domain, fi_av, fi_cq
+                            └── Frees MR cache
+```
+
+## GIN Transport
+
+GIN (Group Interconnect Network) is an NCCL extension for one-sided put
+operations, used by workloads like DeepEP for Mixture-of-Experts dispatch.
+
+**Source files:**
+- `src/rdma/gin/nccl_ofi_gin_api.cpp` — GIN plugin API implementation
+- `src/rdma/gin/nccl_ofi_gin.cpp` — GIN connection establishment (bootstrap ring)
+- `src/rdma/gin/nccl_ofi_gin_resources.cpp` — GIN resource management
+- `src/rdma/gin/nccl_ofi_gin_reqs.cpp` — GIN request handling
+- `src/rdma/gin/nccl_ofi_gin_allgather.cpp` — GIN AllGather for connection setup
+- `include/rdma/gin/nccl_ofi_gin.h` — GIN listen/put comm classes
+- `include/rdma/gin/nccl_ofi_gin_resources.h` — GIN resources and ep_holder
+
+### GIN Plugin API (`ncclGin_v11_t`)
+
+The plugin implements these GIN functions
+([3rd-party/nccl/cuda/include/nccl/net_v11.h](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/3rd-party/nccl/cuda/include/nccl/net_v11.h)):
+
+| Function | Purpose | Source |
+|----------|---------|--------|
+| `init` | Initialize GIN support | `nccl_ofi_gin_api.cpp` |
+| `listen` | Create listening endpoint for bootstrap | `nccl_ofi_gin_api.cpp` |
+| `connect` | Bootstrap ring + create GIN resources | `nccl_ofi_gin.cpp` |
+| `iput` | One-sided RDMA write to remote rank | `nccl_ofi_gin_reqs.cpp` |
+| `iputSignal` | RDMA write + atomic signal increment | `nccl_ofi_gin_reqs.cpp` |
+| `ginProgress` | Progress outstanding operations | `nccl_ofi_gin_reqs.cpp` |
+| `regMrSym` | Register memory for symmetric access | `nccl_ofi_gin_resources.cpp` |
+| `test` | Test request completion | `nccl_ofi_gin_reqs.cpp` |
+| `closeColl` / `closeListen` | Cleanup | `nccl_ofi_gin_api.cpp` |
+
+### GIN Connection Flow
+
+```
+  1. listen(ctx, dev, handle, &listenComm)
+     ├── Creates RDMA endpoint via device->get_ep()
+     ├── Calls ep->listen() to create RDMA listen_comm
+     ├── Sets l_comm->ep = shared_ptr<ep>
+     └── Wraps in nccl_ofi_rdma_gin_listen_comm (holds shared_ptr<ep>)
+
+  2. connect(ctx, handles[], nranks, rank, listenComm, &collComm)
+     ├── Bootstrap ring: connect to rank (rank+1)%nranks, accept from prev rank
+     │    └── Uses standard RDMA connect/accept via CM module
+     ├── Create nccl_ofi_gin_resources on the endpoint
+     │    └── gin_ep_holder keeps endpoint alive via shared_ptr<ep>
+     ├── AllGather connection handles via bootstrap send/recv ring
+     └── Returns nccl_ofi_rdma_gin_put_comm with per-peer state
+
+  3. iput(collComm, srcOff, srcMh, size, dstOff, dstMh, rank, &req)
+     └── fi_write() to remote rank's registered memory
+
+  4. iputSignal(collComm, srcOff, srcMh, size, dstOff, dstMh,
+               rank, signalOff, signalMh, value, op, &req)
+     └── fi_write() for data + atomic signal increment on remote rank
+
+  5. ginProgress(collComm)
+     └── fi_cq_read() on all rails, process completions
+```
+
+### GIN Resource Ownership
+
+```
+  nccl_ofi_rdma_gin_listen_comm
+    └── shared_ptr<ep>           (keeps endpoint alive during bootstrap)
+
+  nccl_ofi_gin_resources
+    └── nccl_ofi_gin_ep_holder
+          └── shared_ptr<ep>     (keeps endpoint alive for GIN operations)
+
+  nccl_ofi_rdma_gin_put_comm
+    └── nccl_ofi_gin_resources&  (reference to resources on the endpoint)
+```
+
+## Connection Manager (CM)
+
+The CM module handles connection establishment as a state machine,
+separating connection logic from transport logic.
+
+**Source files:**
+- `src/cm/nccl_ofi_cm.cpp` — Core CM logic
+- `src/cm/nccl_ofi_cm_reqs.cpp` — CM request handling
+- `src/cm/nccl_ofi_cm_resources.cpp` — CM resource management
+- `include/cm/nccl_ofi_cm.h` — CM interface
+
+### CM State Machine
+
+```
+  Connect side (sender):             Accept side (receiver):
+  ─────────────────────              ──────────────────────
+
+  COMM_CREATE_START                  COMM_CREATE_START
+       │                                  │
+       ▼                                  ▼
+  Create send_comm                   (wait for connect request)
+  CM: fi_tsend(connect_request)           │
+       │                                  ▼
+       ▼                             CM: fi_trecv() → got connect request
+  COMM_CONN_REQ_PENDING              Create recv_comm
+  (waiting for response)             CM: fi_tsend(connect_response)
+       │                                  │
+       ▼                                  ▼
+  CM: fi_trecv() → got response      COMM_CONN_RESP_REQ_PENDING
+  COMM_CONNECTED                     (waiting for delivery confirmation)
+                                          │
+                                          ▼
+                                     COMM_CONNECTED
+```
+
+### CM Key Classes
+
+- `nccl_ofi_cm` — Main CM class, creates connectors/receivers/listeners
+- `nccl_ofi_cm_send_connector` — Active side: sends connect request, waits for response
+- `nccl_ofi_cm_receiver` — Passive side: receives connect request, sends response
+- `nccl_ofi_cm_listener` — Listens for incoming connection requests via fi_trecv
 
 ## Summary
 
