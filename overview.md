@@ -59,20 +59,31 @@ put operations used by workloads like DeepEP (Mixture-of-Experts dispatch).
 └──────────────────────────┬──────────────────────────────┘
                            │ ioctl / mmap
 ┌──────────────────────────▼──────────────────────────────┐
-│          EFA Kernel Driver                              │
+│          EFA Kernel Driver  (efa.ko)                    │  ◄── lowest open-source layer
 │  - Device control (uverbs interface)                    │
 │  - Memory registration (page pinning, IOMMU mapping)    │
-│  - DMA-BUF support for GPU memory                       │
-│  - Hardware resource management                         │
+│  - GPU/accelerator peer memory (P2P) + DMA-BUF          │
+│  - Admin-queue command interface; hardware resource mgmt │
+└──────────────────────────┬──────────────────────────────┘
+            admin queue cmds │ + data-path doorbells/CQs
+┌──────────────────────────▼──────────────────────────────┐
+│     EFA NIC Firmware  (closed)                          │
+│  - SRD (Scalable Reliable Datagram) protocol engine     │
+│  - Multi-path routing (up to 64 paths), congestion ctrl │
+│  - ACK/retransmit, reordering                           │
 └──────────────────────────┬──────────────────────────────┘
                            │ PCIe / hardware
 ┌──────────────────────────▼──────────────────────────────┐
-│     AWS EFA Hardware (NIC)                              │
-│  - SRD (Scalable Reliable Datagram) protocol            │
-│  - Multi-path routing, hardware congestion control      │
+│     AWS EFA Hardware (NIC ASIC, closed)                 │
+│  - DMA engines, queue pairs, completion queues          │
 │  - OS bypass for data path                              │
 └─────────────────────────────────────────────────────────┘
 ```
+
+The EFA kernel driver is the lowest open-source layer; the SRD protocol engine and
+congestion control run in closed NIC firmware, reached only through admin-queue commands
+and data-path doorbells/CQs. See [kernel-efa-driver.md](kernel-efa-driver.md) for the
+firmware boundary, admin-queue phase-bit protocol, and GPU peer-memory internals.
 
 ## Component Roles
 

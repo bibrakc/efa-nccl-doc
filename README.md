@@ -105,11 +105,11 @@ Start with these documents in order:
 ### Architecture Stack
 
 ```
-Application (PyTorch, TensorFlow)
+Application (PyTorch, TensorFlow, DeepEP)
     ↓
-NCCL Library (Collectives, Algorithms)
+NCCL Library (Collectives, Algorithms; Net + GIN plugin APIs)
     ↓
-OFI NCCL Plugin (Network Transport)
+OFI NCCL Plugin (Network Transport: RDMA / SendRecv / GIN[proxy|GDAKI])
     ↓
 Libfabric (Fabric Abstraction)
     ↓
@@ -117,10 +117,18 @@ EFA Provider (Hardware-Specific)
     ↓
 rdma-core (libibverbs)
     ↓
-EFA Kernel Driver (efa.ko)
-    ↓
-EFA Hardware (p4d: 4×100G, p5+: 32×100G EFAv3)
+EFA Kernel Driver (efa.ko)   ──────────────  [open source boundary]
+    ↓                                          everything above is open;
+EFA NIC Firmware (SRD engine, congestion       firmware + ASIC below are closed
+    ↓             control, multipath)
+EFA Hardware (p4d: 4×100G EFAv2; p5/p5en/p6: EFAv3)
 ```
+
+> The kernel driver is the lowest **open-source** layer. The SRD wire protocol,
+> congestion control, and multipath routing run in **closed NIC firmware**; the
+> driver communicates with it only via admin-queue commands and data-path
+> doorbells/completion queues. See [kernel-efa-driver.md](kernel-efa-driver.md)
+> for the firmware/hardware boundary and the admin-queue and GPU peer-memory internals.
 
 ### Data Flow
 
@@ -168,6 +176,29 @@ This documentation is focused on understanding the existing implementation for o
 - Libfabric issues/PRs: https://github.com/ofiwg/libfabric
 
 ## Changelog
+
+### 2026-06-29
+
+#### Stack refresh (versions, eager, GDAKI, low-level internals)
+- **Version baseline updated** to June 2026: NCCL 2.30.4-1, aws-ofi-nccl v1.20.0 /
+  master `f3dd9cd`, libfabric 2.6.x, rdma-core v63. Plugin API versions corrected to
+  `ncclNet_v12_t` / `ncclGin_v13_t` (older versions still exported for back-compat).
+- **Source permalinks unified** to `aws/aws-ofi-nccl/blob/master` (removing several
+  stale pinned commits and a personal fork); line anchors dropped so links don't rot.
+- **Eager protocol documented** in [ofi-plugin-protocols.md](ofi-plugin-protocols.md):
+  the small-message inline path (`EAGER_MAX_SIZE`), the 8-byte eager header, grouped-recv
+  batch draining, and the wrap-safe `eager_seq` that fixed the sequence-number-wrap hang
+  (shipped in v1.20.0).
+- **GIN proxy vs GDAKI modes** documented: `OFI_NCCL_GIN_TYPE` selecting CPU-proxy GIN
+  vs kernel-initiated GDAKI (GPU drives EFA queues directly; requires `--enable-gdaki`,
+  CUDA, DMA-BUF, libfabric 2.5+).
+- **EFA kernel driver internals deepened** in [kernel-efa-driver.md](kernel-efa-driver.md):
+  the GPU/accelerator peer-memory (P2P) provider subsystem (NVIDIA nvmem v1/v2, Neuron) and
+  its revocation-safe ticket mechanism; the admin-queue producer/consumer **phase-bit**
+  protocol and MMIO doorbell submission; and an explicit **firmware/hardware boundary**
+  clarifying what is open source vs closed NIC firmware.
+- **Architecture stack diagram** (this file and [overview.md](overview.md)) updated to show
+  the firmware boundary and the GIN data path.
 
 ### 2026-01-20
 
