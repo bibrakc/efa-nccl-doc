@@ -41,7 +41,7 @@ NCCL Initiates Connection:
 ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
                                  void** listenComm)
 {
-  auto *comm = new nccl_net_ofi_listen_comm();  // C++ class, not C struct  // See struct nccl_net_ofi_listen_comm (https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi.h#L650-L656)
+  auto *comm = new nccl_net_ofi_listen_comm();  // C++ class, not C struct  // See struct nccl_net_ofi_listen_comm (https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi.h)
 
   // 1. Create libfabric endpoint
   struct fi_info* info = get_efa_info(dev);
@@ -99,7 +99,7 @@ ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
 ncclResult_t nccl_net_ofi_connect(int dev, void* handle,
                                   void** sendComm)
 {
-  auto *comm = new nccl_net_ofi_send_comm();  // C++ class, not C struct  // See struct nccl_net_ofi_send_comm (https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi.h#L658-L684)
+  auto *comm = new nccl_net_ofi_send_comm();  // C++ class, not C struct  // See struct nccl_net_ofi_send_comm (https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi.h)
 
   // 1. Deserialize peer's address from handle
   struct nccl_ofi_handle* h = (struct nccl_ofi_handle*)handle;
@@ -156,7 +156,7 @@ ncclResult_t nccl_net_ofi_accept(void* listenComm,
   // No actual connection to "accept" in libfabric
   // Just transition state
 
-  auto *comm = new nccl_net_ofi_recv_comm();  // C++ class, not C struct  // See struct nccl_net_ofi_recv_comm (https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi.h#L686-L716)
+  auto *comm = new nccl_net_ofi_recv_comm();  // C++ class, not C struct  // See struct nccl_net_ofi_recv_comm (https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi.h)
 
   // Copy endpoint and resources from listen comm
   comm->ep = lcomm->ep;
@@ -279,11 +279,11 @@ ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data,
                                 int size, int tag,
                                 void* mhandle, void** request)
 {
-  nccl_net_ofi_send_comm *comm = (nccl_net_ofi_send_comm *)sendComm;  // See struct nccl_net_ofi_send_comm (https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi.h#L658-L684)
+  nccl_net_ofi_send_comm *comm = (nccl_net_ofi_send_comm *)sendComm;  // See struct nccl_net_ofi_send_comm (https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi.h)
   struct fid_mr* mr = mhandle;  // See struct fid_mr (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L131-L138)
 
   // === 1. Allocate Request ===
-  nccl_net_ofi_req *req = alloc_request(comm);  // See struct nccl_net_ofi_req (https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi.h#L126-L129)
+  nccl_net_ofi_req *req = alloc_request(comm);  // See struct nccl_net_ofi_req (https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi.h)
   req->comm = comm;
   req->size = size;
   req->state = REQ_PENDING;
@@ -401,7 +401,7 @@ ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n,
                                 int* tags, void** mhandles,
                                 void** request)
 {
-  nccl_net_ofi_recv_comm *comm = (nccl_net_ofi_recv_comm *)recvComm;  // See struct nccl_net_ofi_recv_comm (https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi.h#L686-L716)
+  nccl_net_ofi_recv_comm *comm = (nccl_net_ofi_recv_comm *)recvComm;  // See struct nccl_net_ofi_recv_comm (https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi.h)
 
   // === 1. Allocate Request for All Receives ===
   nccl_net_ofi_req *req = alloc_request(comm);
@@ -770,7 +770,7 @@ state management from transport-specific logic.
 - `src/cm/nccl_ofi_cm.cpp` — Core CM logic
 - `src/cm/nccl_ofi_cm_reqs.cpp` — CM request handling
 - `src/cm/nccl_ofi_cm_resources.cpp` — CM resource management
-- `include/cm/nccl_ofi_cm.h` — CM interface ([view](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/cm/nccl_ofi_cm.h))
+- `include/cm/nccl_ofi_cm.h` — CM interface ([view](https://github.com/aws/aws-ofi-nccl/blob/master/include/cm/nccl_ofi_cm.h))
 
 **Key classes:**
 - `nccl_ofi_cm` — Creates connectors, receivers, and listeners
@@ -789,8 +789,8 @@ GPU-initiated networking workloads like DeepEP. It wraps the RDMA
 transport and adds group communication (all-ranks-to-all-ranks).
 
 **Source files:**
-- `src/rdma/gin/nccl_ofi_gin_api.cpp` — GIN plugin API ([view](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/rdma/gin/nccl_ofi_gin_api.cpp))
-- `src/rdma/gin/nccl_ofi_gin.cpp` — Bootstrap ring connection ([view](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/rdma/gin/nccl_ofi_gin.cpp))
+- `src/rdma/gin/nccl_ofi_gin_api.cpp` — GIN plugin API ([view](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_api.cpp))
+- `src/rdma/gin/nccl_ofi_gin.cpp` — Bootstrap ring connection ([view](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin.cpp))
 - `src/rdma/gin/nccl_ofi_gin_resources.cpp` — Resource management
 - `src/rdma/gin/nccl_ofi_gin_reqs.cpp` — Request handling (iput, iputSignal)
 - `src/rdma/gin/nccl_ofi_gin_allgather.cpp` — AllGather for handle exchange
@@ -838,4 +838,4 @@ group communicator where all ranks can put data to all other ranks:
 | Notification | Completion queue or tag match | Atomic signal increment |
 | Bootstrap | CM handshake (2 messages) | Ring connect + AllGather |
 | Use case | NCCL collectives | DeepEP MoE dispatch |
-| API | ncclNet_v11_t | ncclGin_v11_t |
+| API | ncclNet_v12_t | ncclGin_v13_t |

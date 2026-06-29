@@ -762,4 +762,4 @@ This eliminates the previous lock ordering issues during destruction:
 object destruction. They are only held during table lookups (creating/finding
 endpoints and domains), which are on the connection setup path, not the data path.
 
-**Source:** [src/nccl_ofi_net.cpp](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_net.cpp) — `get_domain()`, `get_ep()`
+**Source:** [src/nccl_ofi_net.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_net.cpp) — `get_domain()`, `get_ep()`

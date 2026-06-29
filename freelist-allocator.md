@@ -25,7 +25,7 @@ Freelists solve several performance problems in the OFI plugin:
 For objects that don't require memory registration:
 
 ```c
-int nccl_ofi_freelist_init( // ([src/nccl_ofi_freelist.cpp:131](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_freelist.cpp#L131))
+int nccl_ofi_freelist_init( // ([src/nccl_ofi_freelist.cpp:131](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_freelist.cpp))
     size_t entry_size,              // Size of each entry
     size_t initial_entry_count,     // Initial pool size
     size_t increase_entry_count,    // Growth increment
@@ -44,7 +44,7 @@ int nccl_ofi_freelist_init( // ([src/nccl_ofi_freelist.cpp:131](https://github.c
 For buffers that require memory registration with libfabric:
 
 ```c
-int nccl_ofi_freelist_init_mr( // ([src/nccl_ofi_freelist.cpp:188](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_freelist.cpp#L188))
+int nccl_ofi_freelist_init_mr( // ([src/nccl_ofi_freelist.cpp:188](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_freelist.cpp))
     size_t entry_size,
     size_t initial_entry_count,
     size_t increase_entry_count,
@@ -68,14 +68,14 @@ int nccl_ofi_freelist_init_mr( // ([src/nccl_ofi_freelist.cpp:188](https://githu
 
 ```c
 // Freelist element returned to users
-typedef struct nccl_ofi_freelist_elem ([include/nccl_ofi_freelist.h:19-23](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi_freelist.h#L19-L23)) {
+typedef struct nccl_ofi_freelist_elem ([include/nccl_ofi_freelist.h:19-23](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_freelist.h)) {
     void *ptr;              // Pointer to actual buffer
     void *mr_handle;        // Memory registration handle (MR freelists only)
     struct nccl_ofi_freelist_elem *next;  // Internal linked list
 } nccl_ofi_freelist_elem_t;
 
 // Main freelist structure (opaque to users)
-struct nccl_ofi_freelist_t ([include/nccl_ofi_freelist.h:88-109](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi_freelist.h#L88-L109)) {
+struct nccl_ofi_freelist_t ([include/nccl_ofi_freelist.h:88-109](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_freelist.h)) {
     size_t entry_size;                  // Size of each entry
     size_t num_allocated_entries;       // Total allocated
     size_t max_entry_count;             // Maximum entries
@@ -98,7 +98,7 @@ struct nccl_ofi_freelist_t ([include/nccl_ofi_freelist.h:88-109](https://github.
 };
 
 // Memory block tracking
-struct nccl_ofi_freelist_block_t ([include/nccl_ofi_freelist.h:28-35](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi_freelist.h#L28-L35)) {
+struct nccl_ofi_freelist_block_t ([include/nccl_ofi_freelist.h:28-35](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_freelist.h)) {
     struct nccl_ofi_freelist_block_t *next;
     void *memory;               // Base of allocated memory
     size_t memory_size;         // Size (rounded to page boundaries)
@@ -113,7 +113,7 @@ struct nccl_ofi_freelist_block_t ([include/nccl_ofi_freelist.h:28-35](https://gi
 ### Allocation Flow
 
 ```
-User calls: nccl_ofi_freelist_entry_alloc(freelist) // ([src/nccl_ofi_freelist.cpp:270](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_freelist.cpp#L270))
+User calls: nccl_ofi_freelist_entry_alloc(freelist) // ([src/nccl_ofi_freelist.cpp:270](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_freelist.cpp))
     ↓
 Lock freelist mutex
     ↓
@@ -144,7 +144,7 @@ Return nccl_ofi_freelist_elem_t* to user
 ### Deallocation Flow
 
 ```
-User calls: nccl_ofi_freelist_entry_free(freelist, entry) // ([src/nccl_ofi_freelist.cpp:318](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_freelist.cpp#L318))
+User calls: nccl_ofi_freelist_entry_free(freelist, entry) // ([src/nccl_ofi_freelist.cpp:318](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_freelist.cpp))
     ↓
 Lock freelist mutex
     ↓
@@ -481,8 +481,8 @@ The freelist allocator is a **critical performance component**:
 functions to a C++ class (`nccl_ofi_freelist`) with constructors and
 methods. The code examples and line number references above are from the
 older C version. The current implementation is at:
-- Header: [include/nccl_ofi_freelist.h](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi_freelist.h)
-- Implementation: [src/nccl_ofi_freelist.cpp](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_freelist.cpp)
+- Header: [include/nccl_ofi_freelist.h](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_freelist.h)
+- Implementation: [src/nccl_ofi_freelist.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_freelist.cpp)
 
 Key changes:
 - `nccl_ofi_freelist_init()` / `nccl_ofi_freelist_init_mr()` → C++ constructors

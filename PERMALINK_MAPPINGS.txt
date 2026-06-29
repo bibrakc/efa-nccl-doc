@@ -64,7 +64,7 @@ fi_close|libfabric|include/rdma/fabric.h|150
 # linux: e84d960
 
 # === GitHub Base URLs ===
-# aws-ofi-nccl: https://github.com/sirmick/aws-ofi-nccl/blob/75240c8
+# aws-ofi-nccl: https://github.com/aws/aws-ofi-nccl/blob/master
 # libfabric: https://github.com/ofiwg/libfabric/blob/6b9e629
 # amzn-drivers: https://github.com/amzn/amzn-drivers/blob/8a8b6f2
 # rdma-core: https://github.com/linux-rdma/rdma-core/blob/6e9643e

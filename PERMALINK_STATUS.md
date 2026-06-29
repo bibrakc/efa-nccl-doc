@@ -24,27 +24,27 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 ### freelist-allocator.md ✅
 **Status**: 8 permalinks added
 **Structs linked (3)**:
-- `struct nccl_ofi_freelist_elem` → [include/nccl_ofi_freelist.h:19-23](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi_freelist.h#L19-L23)
-- `struct nccl_ofi_freelist_t` → [include/nccl_ofi_freelist.h:88-109](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi_freelist.h#L88-L109)
-- `struct nccl_ofi_freelist_block_t` → [include/nccl_ofi_freelist.h:28-35](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi_freelist.h#L28-L35)
+- `struct nccl_ofi_freelist_elem` → [include/nccl_ofi_freelist.h:19-23](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_freelist.h)
+- `struct nccl_ofi_freelist_t` → [include/nccl_ofi_freelist.h:88-109](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_freelist.h)
+- `struct nccl_ofi_freelist_block_t` → [include/nccl_ofi_freelist.h:28-35](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_freelist.h)
 
 **Functions linked (5)**:
-- `nccl_ofi_freelist_init()` → [src/nccl_ofi_freelist.cpp:131](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_freelist.cpp#L131)
-- `nccl_ofi_freelist_init_mr()` → [src/nccl_ofi_freelist.cpp:188](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_freelist.cpp#L188)
-- `nccl_ofi_freelist_entry_alloc()` → [src/nccl_ofi_freelist.cpp:270](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_freelist.cpp#L270)
-- `nccl_ofi_freelist_entry_free()` → [src/nccl_ofi_freelist.cpp:318](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_freelist.cpp#L318)
+- `nccl_ofi_freelist_init()` → [src/nccl_ofi_freelist.cpp:131](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_freelist.cpp)
+- `nccl_ofi_freelist_init_mr()` → [src/nccl_ofi_freelist.cpp:188](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_freelist.cpp)
+- `nccl_ofi_freelist_entry_alloc()` → [src/nccl_ofi_freelist.cpp:270](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_freelist.cpp)
+- `nccl_ofi_freelist_entry_free()` → [src/nccl_ofi_freelist.cpp:318](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_freelist.cpp)
 - `fi_mr_reg()` → [include/rdma/fi_domain.h:413](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413)
 
 ### mr-cache-implementation.md ✅
 **Status**: 6 permalinks added
 **Structs linked (2)**:
-- `struct nccl_ofi_reg_entry` → [include/nccl_ofi_mr.h:186-192](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi_mr.h#L186-L192)
-- `struct nccl_ofi_mr_cache` → [include/nccl_ofi_mr.h:197-205](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/include/nccl_ofi_mr.h#L197-L205)
+- `struct nccl_ofi_reg_entry` → [include/nccl_ofi_mr.h:186-192](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_mr.h)
+- `struct nccl_ofi_mr_cache` → [include/nccl_ofi_mr.h:197-205](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_mr.h)
 
 **Functions linked (4)**:
-- `nccl_ofi_mr_cache_init()` → [src/nccl_ofi_mr.cpp:13](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_mr.cpp#L13)
-- `nccl_ofi_mr_cache_lookup_entry()` → [src/nccl_ofi_mr.cpp:112](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_mr.cpp#L112)
-- `nccl_ofi_mr_cache_insert_entry()` → [src/nccl_ofi_mr.cpp:153](https://github.com/sirmick/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_mr.cpp#L153)
+- `nccl_ofi_mr_cache_init()` → [src/nccl_ofi_mr.cpp:13](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_mr.cpp)
+- `nccl_ofi_mr_cache_lookup_entry()` → [src/nccl_ofi_mr.cpp:112](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_mr.cpp)
+- `nccl_ofi_mr_cache_insert_entry()` → [src/nccl_ofi_mr.cpp:153](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_mr.cpp)
 - `fi_mr_reg()` → [include/rdma/fi_domain.h:413](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413)
 
 ### libfabric-overview.md ✅
@@ -152,10 +152,10 @@ Task: Add GitHub permalink references to all struct and function mentions in NCC
 ### cuda-memory.md ✅
 **Status**: 4 permalinks added (functions/macros)
 **Key functions/macros linked**:
-- `nccl_net_ofi_gpu_init()` → [nccl_ofi_cuda.cpp:89-200](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L89-L200)
-- Function pointers: `pfn_cudaRuntimeGetVersion`, `pfn_cudaGetDriverEntryPointByVersion`, `pfn_cudaGetDriverEntryPoint` → [nccl_ofi_cuda.cpp:20-24](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L20-L24)
-- `DECLARE_CUDA_FUNCTION` macro → [nccl_ofi_cuda.cpp:40](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L40)
-- `RESOLVE_CUDA_FUNCTION` macro → [nccl_ofi_cuda.cpp:43-65](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/nccl_ofi_cuda.cpp#L43-L65)
+- `nccl_net_ofi_gpu_init()` → [nccl_ofi_cuda.cpp:89-200](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_cuda.cpp)
+- Function pointers: `pfn_cudaRuntimeGetVersion`, `pfn_cudaGetDriverEntryPointByVersion`, `pfn_cudaGetDriverEntryPoint` → [nccl_ofi_cuda.cpp:20-24](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_cuda.cpp)
+- `DECLARE_CUDA_FUNCTION` macro → [nccl_ofi_cuda.cpp:40](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_cuda.cpp)
+- `RESOLVE_CUDA_FUNCTION` macro → [nccl_ofi_cuda.cpp:43-65](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_cuda.cpp)
 
 ### dmabuf-gpu-memory.md ✅
 **Status**: 2 permalinks added + comprehensive code references

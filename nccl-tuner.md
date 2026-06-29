@@ -21,7 +21,7 @@ The tuner can be **extended via plugins** to override NCCL's default selections.
 
 ### Algorithms
 
-From [nccl_tuner.h:25-33](https://github.com/aws/aws-ofi-nccl/blob/75240c8/3rd-party/nccl/cuda/include/nccl/tuner.h#L25-L33):
+From [nccl_tuner.h:25-33](https://github.com/aws/aws-ofi-nccl/blob/master/3rd-party/nccl/cuda/include/nccl/tuner.h):
 
 ```c
 #define NCCL_ALGO_UNDEF -1
@@ -54,7 +54,7 @@ From [nccl_tuner.h:25-33](https://github.com/aws/aws-ofi-nccl/blob/75240c8/3rd-p
 
 ### Protocols
 
-From [nccl_tuner.h:35-39](https://github.com/aws/aws-ofi-nccl/blob/75240c8/3rd-party/nccl/cuda/include/nccl/tuner.h#L35-L39):
+From [nccl_tuner.h:35-39](https://github.com/aws/aws-ofi-nccl/blob/master/3rd-party/nccl/cuda/include/nccl/tuner.h):
 
 ```c
 #define NCCL_PROTO_UNDEF -1
@@ -118,7 +118,7 @@ Where:
 
 ### Tuner v5 Interface
 
-From [tuner_v5.h:38-85](https://github.com/aws/aws-ofi-nccl/blob/75240c8/3rd-party/nccl/cuda/include/nccl/tuner_v2.h):
+From [tuner_v5.h:38-85](https://github.com/aws/aws-ofi-nccl/blob/master/3rd-party/nccl/cuda/include/nccl/tuner_v2.h):
 
 ```c
 typedef struct {
@@ -179,7 +179,7 @@ export NCCL_TUNER_PLUGIN=/path/to/libnccl-ofi-tuner.so
 
 ### Tuner Constants
 
-From [tuner_v5.h:24-35](https://github.com/aws/aws-ofi-nccl/blob/75240c8/3rd-party/nccl/cuda/include/nccl/tuner_v2.h):
+From [tuner_v5.h:24-35](https://github.com/aws/aws-ofi-nccl/blob/master/3rd-party/nccl/cuda/include/nccl/tuner_v2.h):
 
 ```c
 typedef struct {
@@ -256,9 +256,9 @@ The AWS OFI plugin includes a **region-based tuner** that uses empirically-deriv
 **Source Location**: [aws-ofi-nccl/src/tuner/](https://github.com/aws/aws-ofi-nccl/tree/75240c8/src/tuner)
 
 **Key Files**:
-- [nccl_ofi_tuner.cpp](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/tuner/nccl_ofi_tuner.cpp) - Plugin entry points
-- [nccl_ofi_regions.cpp](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/tuner/nccl_ofi_regions.cpp) - Region definitions
-- [nccl_ofi_tuner_region.h](https://github.com/aws/aws-ofi-nccl/blob/75240c8/include/tuner/nccl_ofi_tuner_region.h) - Region data structures
+- [nccl_ofi_tuner.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/tuner/nccl_ofi_tuner.cpp) - Plugin entry points
+- [nccl_ofi_regions.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/tuner/nccl_ofi_regions.cpp) - Region definitions
+- [nccl_ofi_tuner_region.h](https://github.com/aws/aws-ofi-nccl/blob/master/include/tuner/nccl_ofi_tuner_region.h) - Region data structures
 
 ### Region-Based Selection
 
@@ -268,7 +268,7 @@ The AWS OFI plugin includes a **region-based tuner** that uses empirically-deriv
 - X-axis: Message size (bytes)
 - Y-axis: Number of ranks
 
-**Region Definition** ([nccl_ofi_tuner_region.h:62-67](https://github.com/aws/aws-ofi-nccl/blob/75240c8/include/tuner/nccl_ofi_tuner_region.h#L62-L67)):
+**Region Definition** ([nccl_ofi_tuner_region.h:62-67](https://github.com/aws/aws-ofi-nccl/blob/master/include/tuner/nccl_ofi_tuner_region.h)):
 
 ```c
 typedef struct nccl_ofi_tuner_point {
@@ -284,7 +284,7 @@ typedef struct nccl_ofi_tuner_region {
 } nccl_ofi_tuner_region_t;
 ```
 
-**Region Limits** ([nccl_ofi_tuner_region.h:43-54](https://github.com/aws/aws-ofi-nccl/blob/75240c8/include/tuner/nccl_ofi_tuner_region.h#L43-L54)):
+**Region Limits** ([nccl_ofi_tuner_region.h:43-54](https://github.com/aws/aws-ofi-nccl/blob/master/include/tuner/nccl_ofi_tuner_region.h)):
 
 ```c
 /* Maximum number of vertices per region */
@@ -313,7 +313,7 @@ Uses ray-casting algorithm to determine polygon containment.
 
 ### Supported Platforms
 
-From [nccl_ofi_tuner_common.h](https://github.com/aws/aws-ofi-nccl/blob/75240c8/include/tuner/nccl_ofi_tuner_common.h):
+From [nccl_ofi_tuner_common.h](https://github.com/aws/aws-ofi-nccl/blob/master/include/tuner/nccl_ofi_tuner_common.h):
 
 ```c
 enum nccl_ofi_tuner_platform {
@@ -332,7 +332,7 @@ enum nccl_ofi_tuner_platform {
 
 ### Example: p5en AllReduce Regions
 
-From [nccl_ofi_regions.cpp](https://github.com/aws/aws-ofi-nccl/blob/75240c8/src/tuner/nccl_ofi_regions.cpp) (simplified):
+From [nccl_ofi_regions.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/tuner/nccl_ofi_regions.cpp) (simplified):
 
 **For 8 ranks per node (typical configuration)**:
 
@@ -404,7 +404,7 @@ const nccl_ofi_tuner_region_t regions[] = {
 
 **Purpose**: Extend a region boundary to infinity (max size/ranks)
 
-From [nccl_ofi_tuner_region.h:69-71](https://github.com/aws/aws-ofi-nccl/blob/75240c8/include/tuner/nccl_ofi_tuner_region.h#L69-L71):
+From [nccl_ofi_tuner_region.h:69-71](https://github.com/aws/aws-ofi-nccl/blob/master/include/tuner/nccl_ofi_tuner_region.h):
 
 ```c
 nccl_ofi_tuner_point_t extend_region(nccl_ofi_tuner_point_t a,

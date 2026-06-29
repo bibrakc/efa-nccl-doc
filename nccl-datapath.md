@@ -194,7 +194,7 @@ void* ncclProxyService(void* _args) {
 ncclNet->isend(sendComm, data, size, tag, mhandle, &request);
 ```
 
-**OFI Plugin Implementation** ([aws-ofi-nccl/src/nccl_ofi_api.cpp](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp)):
+**OFI Plugin Implementation** ([aws-ofi-nccl/src/nccl_ofi_api.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_api.cpp)):
 
 ```c
 // aws-ofi-nccl send implementation
@@ -222,11 +222,11 @@ ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data, int size,
 - Return request handle for polling
 
 **Key Files**:
-- [nccl_ofi_api.cpp](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp) - Main ncclNet API layer (dispatches to RDMA/SendRecv transports)
-- [nccl_ofi_rdma.cpp](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_rdma.cpp) - RDMA transport (P5+, default)
-- [nccl_ofi_sendrecv.cpp](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_sendrecv.cpp) - SendRecv transport (P4d)
-- [nccl_ofi_net.cpp](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_net.cpp) - Core plugin logic (get_domain, get_ep, object management)
-- [nccl_ofi_mr.cpp](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_mr.cpp) - Memory registration cache
+- [nccl_ofi_api.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_api.cpp) - Main ncclNet API layer (dispatches to RDMA/SendRecv transports)
+- [nccl_ofi_rdma.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_rdma.cpp) - RDMA transport (P5+, default)
+- [nccl_ofi_sendrecv.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_sendrecv.cpp) - SendRecv transport (P4d)
+- [nccl_ofi_net.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_net.cpp) - Core plugin logic (get_domain, get_ep, object management)
+- [nccl_ofi_mr.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_mr.cpp) - Memory registration cache
 
 - **Timing**: ~1-3 μs (if memory registered)
 
@@ -413,7 +413,7 @@ ssize_t efa_cq_read(struct fid_cq *cq_fid, void *buf, size_t count) {
 }
 ```
 
-**OFI Plugin** ([aws-ofi-nccl/src/nccl_ofi_api.cpp](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp)):
+**OFI Plugin** ([aws-ofi-nccl/src/nccl_ofi_api.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_api.cpp)):
 ```c
 // Test for completion
 ncclResult_t nccl_net_ofi_itest(void* request, int* done, int* size) {

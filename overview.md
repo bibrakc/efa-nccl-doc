@@ -4,11 +4,11 @@
 
 This documentation covers the integration of NVIDIA NCCL (NVIDIA Collective Communications Library) with AWS EFA (Elastic Fabric Adapter) through the OFI (OpenFabrics Interfaces) plugin and libfabric.
 
-**Current Versions (as of April 2026):**
-- NCCL: 2.30.x (v2.30.3-1)
-- OFI Plugin (aws-ofi-nccl): C++ codebase, master at [c2a27c4](https://github.com/aws/aws-ofi-nccl/commit/c2a27c4)
-- Libfabric: 2.x series with EFA provider
-- rdma-core: v61+
+**Current Versions (as of June 2026):**
+- NCCL: 2.30.x (v2.30.4-1)
+- OFI Plugin (aws-ofi-nccl): C++ codebase, latest release v1.20.0, master at [f3dd9cd](https://github.com/aws/aws-ofi-nccl/commit/f3dd9cd)
+- Libfabric: 2.6.x series with EFA provider
+- rdma-core: v63+
 - EFA Hardware: v2 (P5) and v3 (P5en, P6)
 
 ## Architecture Stack
@@ -30,7 +30,7 @@ put operations used by workloads like DeepEP (Mixture-of-Experts dispatch).
 │    one-sided operations used by DeepEP/MoE workloads)   │
 │  - Transport abstraction (Net, CollNet, GIN plugins)    │
 └──────────────┬──────────────────────┬───────────────────┘
-               │ ncclNet_v11_t API    │ ncclGin_v11_t API
+               │ ncclNet_v12_t API    │ ncclGin_v13_t API
 ┌──────────────▼──────────────────────▼───────────────────┐
 │          OFI NCCL Plugin (aws-ofi-nccl)                 │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐   │
@@ -79,8 +79,8 @@ put operations used by workloads like DeepEP (Mixture-of-Experts dispatch).
 ### NCCL
 - **Purpose**: High-performance multi-GPU/multi-node collective communication
 - **Key Features**: Optimized collective algorithms, topology awareness, transport abstraction
-- **Net Plugin API** (`ncclNet_v11_t`): Standard send/recv/write interface for collective operations
-- **GIN Plugin API** (`ncclGin_v11_t`): One-sided put/signal interface for GPU-initiated networking (DeepEP/MoE)
+- **Net Plugin API** (`ncclNet_v12_t`, newest; older versions down to v4 also exported for back-compat): Standard send/recv/write interface for collective operations
+- **GIN Plugin API** (`ncclGin_v13_t`, newest; `ncclGin_v11_t` also exported): One-sided put/signal interface for GPU-initiated networking (DeepEP/MoE)
 - **Focus Areas**: Collective operations, data path, algorithms
 
 ### OFI NCCL Plugin

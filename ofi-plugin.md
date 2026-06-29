@@ -2,7 +2,7 @@
 
 ## Overview
 
-The OFI (OpenFabrics Interfaces) NCCL plugin (`aws-ofi-nccl`) provides a network transport for NCCL using libfabric. It implements both NCCL's network plugin interface (`ncclNet_v11_t`) and the GIN plugin interface (`ncclGin_v11_t`), and is the primary way NCCL communicates over AWS EFA.
+The OFI (OpenFabrics Interfaces) NCCL plugin (`aws-ofi-nccl`) provides a network transport for NCCL using libfabric. It implements both NCCL's network plugin interface (up to `ncclNet_v12_t`) and the GIN plugin interface (up to `ncclGin_v13_t`), and is the primary way NCCL communicates over AWS EFA.
 
 **Repository**: https://github.com/aws/aws-ofi-nccl
 
@@ -52,7 +52,7 @@ The OFI plugin supports different communication protocols based on instance capa
 - **p6e-gb200+**: Catch-all regex matches future P-series instances with same RDMA defaults.
 - **Multi-rail**: Each GPU can use 4 EFA adapters (p4d: 4×100G, p5+: sharing 32 total EFAs across 8 GPUs)
 
-**Protocol Selection** ([src/platform-aws.cpp:81-250](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/platform-aws.cpp#L81-L250)):
+**Protocol Selection** ([src/platform-aws.cpp:81-250](https://github.com/aws/aws-ofi-nccl/blob/master/src/platform-aws.cpp)):
 ```cpp
 // P4d/P4de: default_protocol = PROTOCOL::SENDRECV
 // P5/P5e:   default_protocol = PROTOCOL::RDMA     (latency = 75.0)
@@ -90,13 +90,13 @@ The OFI plugin supports different communication protocols based on instance capa
 
 ## ncclNet_t Interface Implementation
 
-The plugin implements all functions in the `ncclNet_v11_t` interface (previously `ncclNet_t`).
+The plugin implements the `ncclNet_v12_t` interface (newest), and also exports older interface versions down to `ncclNet_v4` so a given NCCL build links the highest version it supports.
 The API layer is in `src/nccl_ofi_api.cpp`, which dispatches to transport-specific
 implementations in `src/nccl_ofi_rdma.cpp` (RDMA) or `src/nccl_ofi_sendrecv.cpp` (SendRecv).
 
 ### Initialization
 
-**`nccl_net_ofi_init()`** ([src/nccl_ofi_api.cpp:58](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L58)):
+**`nccl_net_ofi_init()`** ([src/nccl_ofi_api.cpp:58](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_api.cpp)):
 
 ```cpp
 ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
@@ -127,7 +127,7 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 
 ### Device Discovery
 
-**`nccl_net_ofi_devices()` / `nccl_net_ofi_get_properties()`** ([src/nccl_ofi_api.cpp:111](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L111), [src/nccl_ofi_api.cpp:129](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L129)):
+**`nccl_net_ofi_devices()` / `nccl_net_ofi_get_properties()`** ([src/nccl_ofi_api.cpp:111](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_api.cpp), [src/nccl_ofi_api.cpp:129](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_api.cpp)):
 
 ```cpp
 ncclResult_t nccl_net_ofi_devices(int *num_devices)
@@ -163,7 +163,7 @@ repeatedly until the connection is established.
 
 #### Listener (Passive Side)
 
-**`nccl_net_ofi_listen()`** ([src/nccl_ofi_api.cpp:150](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L150)):
+**`nccl_net_ofi_listen()`** ([src/nccl_ofi_api.cpp:150](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_api.cpp)):
 
 ```cpp
 ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle,
@@ -212,7 +212,7 @@ Inside the transport-specific `ep->listen()`, the following libfabric calls happ
 
 #### Connector (Active Side)
 
-**`nccl_net_ofi_connect()`** ([src/nccl_ofi_api.cpp:220](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L220)):
+**`nccl_net_ofi_connect()`** ([src/nccl_ofi_api.cpp:220](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_api.cpp)):
 
 This is a **multi-call state machine**. NCCL calls connect() repeatedly until
 `sendComm != NULL`. On the first call, the endpoint and send_comm are created.
@@ -260,7 +260,7 @@ Inside the transport-specific `ep->connect()`:
 
 #### Accept (Complete Passive Connection)
 
-**`nccl_net_ofi_accept()`** ([src/nccl_ofi_api.cpp:294](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L294)):
+**`nccl_net_ofi_accept()`** ([src/nccl_ofi_api.cpp:294](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_api.cpp)):
 
 Also a multi-call state machine. The CM module handles the handshake:
 
@@ -282,7 +282,7 @@ ncclResult_t nccl_net_ofi_accept(void *lComm, void **rComm)
 
 ### Memory Registration
 
-**`nccl_net_ofi_regMrDmaBuf()`** ([src/nccl_ofi_api.cpp:329](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L329)):
+**`nccl_net_ofi_regMrDmaBuf()`** ([src/nccl_ofi_api.cpp:329](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_api.cpp)):
 
 The plugin now uses a unified registration function that handles both standard
 memory (iovec) and GPU memory via DMA-BUF. Registration is dispatched to the
@@ -329,7 +329,7 @@ Inside the transport-specific `regMr()`, the MR cache is consulted:
   nccl_ofi_mr_cache_insert_entry(domain->mr_cache, &cache_key, endpoint_mr, handle);
 ```
 
-**Registration Cache** ([include/nccl_ofi_mr.h](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/include/nccl_ofi_mr.h)):
+**Registration Cache** ([include/nccl_ofi_mr.h](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_mr.h)):
 ```cpp
 // Cache entry — one per registered memory region
 typedef struct nccl_ofi_reg_entry {
@@ -371,7 +371,7 @@ struct nccl_ofi_mr_ckey {
 
 ### Send Operations
 
-**`nccl_net_ofi_isend()`** ([src/nccl_ofi_api.cpp:441](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L441)):
+**`nccl_net_ofi_isend()`** ([src/nccl_ofi_api.cpp:441](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_api.cpp)):
 
 The API layer casts the comm and dispatches to the transport-specific `send()` virtual method:
 
@@ -412,7 +412,7 @@ Inside the transport-specific `send()` (e.g., RDMA or SendRecv):
 
 ### Receive Operations
 
-**`nccl_net_ofi_irecv()`** ([src/nccl_ofi_api.cpp:471](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L471)):
+**`nccl_net_ofi_irecv()`** ([src/nccl_ofi_api.cpp:471](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_api.cpp)):
 
 ```cpp
 ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n,
@@ -446,7 +446,7 @@ Inside the transport-specific `recv()`:
 
 ### Flush Operations (RDMA Write Completion)
 
-**`nccl_net_ofi_iflush()`** ([src/nccl_ofi_api.cpp:537](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L537)):
+**`nccl_net_ofi_iflush()`** ([src/nccl_ofi_api.cpp:537](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_api.cpp)):
 
 ```cpp
 ncclResult_t nccl_net_ofi_iflush(void* rComm, int n,
@@ -477,7 +477,7 @@ Inside the RDMA transport flush:
 
 ### Completion Testing
 
-**`nccl_net_ofi_test()`** ([src/nccl_ofi_api.cpp:524](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L524)):
+**`nccl_net_ofi_test()`** ([src/nccl_ofi_api.cpp:524](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_api.cpp)):
 
 ```cpp
 ncclResult_t nccl_net_ofi_test(void* request, int* done, int* size)
@@ -523,7 +523,7 @@ ncclResult_t nccl_net_ofi_test(void* request, int* done, int* size)
 
 ### Cleanup
 
-**`nccl_net_ofi_deregMr()`** ([src/nccl_ofi_api.cpp:399](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_api.cpp#L399)):
+**`nccl_net_ofi_deregMr()`** ([src/nccl_ofi_api.cpp:399](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_api.cpp)):
 
 ```cpp
 ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
@@ -621,7 +621,7 @@ Modern instances can use different EFA aggregations:
 - Expose each EFA as separate device to NCCL
 - NCCL distributes channels across devices
 - Aggregate bandwidth increases linearly with NICs
-- Plugin handles rail reordering for optimal pairing ([src/platform-aws.cpp:983](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/platform-aws.cpp#L973))
+- Plugin handles rail reordering for optimal pairing ([src/platform-aws.cpp:983](https://github.com/aws/aws-ofi-nccl/blob/master/src/platform-aws.cpp))
 
 **Configuration:**
 ```bash
@@ -895,7 +895,7 @@ nccl_net_ofi_plugin_t                    (singleton, one per process)
 ### Lazy Cleanup Pattern
 
 The `get_ep()` and `get_domain()` functions use a lazy cleanup pattern
-([src/nccl_ofi_net.cpp](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/src/nccl_ofi_net.cpp)):
+([src/nccl_ofi_net.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_net.cpp)):
 
 ```cpp
 // domain_t::get_ep(endpoint_key)
@@ -951,10 +951,10 @@ operations, used by workloads like DeepEP for Mixture-of-Experts dispatch.
 - `include/rdma/gin/nccl_ofi_gin.h` — GIN listen/put comm classes
 - `include/rdma/gin/nccl_ofi_gin_resources.h` — GIN resources and ep_holder
 
-### GIN Plugin API (`ncclGin_v11_t`)
+### GIN Plugin API (`ncclGin_v13_t`)
 
 The plugin implements these GIN functions
-([3rd-party/nccl/cuda/include/nccl/net_v11.h](https://github.com/aws/aws-ofi-nccl/blob/c2a27c4/3rd-party/nccl/cuda/include/nccl/net_v11.h)):
+([3rd-party/nccl/cuda/include/nccl/gin_v13.h](https://github.com/aws/aws-ofi-nccl/blob/master/3rd-party/nccl/cuda/include/nccl/gin_v13.h)):
 
 | Function | Purpose | Source |
 |----------|---------|--------|
