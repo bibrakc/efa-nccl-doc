@@ -8,6 +8,28 @@ The **EFA kernel driver** is a Linux kernel module that provides the interface b
 
 **Driver Version**: 3.0.0 (as of this documentation)
 
+### Firmware and Hardware Boundary (what is open vs closed)
+
+The EFA kernel driver (`efa.ko`, ~13K LOC under `kernel/linux/efa/src`) is **open source**
+(GPL-2.0 / Linux-OpenIB), as is everything above it in the stack — libfabric's EFA
+provider (`prov/efa`, ~62K LOC), rdma-core's EFA userspace verbs (`providers/efa`,
+~4.5K LOC), and the OFI plugin. The driver is a relatively thin **control-plane and
+resource manager**: it sets up queues, registers memory, and exchanges commands with the
+device over the admin queue. It does **not** implement the wire protocol.
+
+The actual transport intelligence lives in **closed NIC firmware** running on the EFA
+adapter (Nitro-class hardware):
+- **SRD protocol** — packetization, multipath spraying across up to 64 paths, reordering,
+  ACK/retransmit, and hardware congestion control (see `srd-protocol.md`). The driver and
+  firmware communicate only through admin-queue commands and the data-path doorbells/CQs;
+  the SRD state machine itself is not in any open source.
+- **Hardware/ASIC** — the NIC silicon and its DMA engines.
+
+Practical consequence: behaviors like the **Gen 1–3 DMA-BUF page-merging issue** are
+firmware characteristics observable from the driver, not bugs fixable in the open driver
+source. When debugging, the open code tells you *what was requested of the device*; the
+device's internal handling is inferred from completions, counters, and errors.
+
 ## Architecture Position
 
 ```
@@ -378,6 +400,65 @@ int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 }
 ```
 
+### 3b. GPU & Accelerator Peer Memory (P2P Subsystem)
+
+Registering **device** memory (GPU/accelerator) for RDMA is fundamentally different
+from host memory: the pages live behind another device's BAR, not in system RAM, so
+the EFA driver cannot just `get_user_pages()`. The driver has a dedicated peer-memory
+(P2P) subsystem (`efa_p2p.c`, `efa_p2p.h`) that abstracts *how* device pages are
+pinned and translated to DMA addresses, with one pluggable provider per accelerator
+family.
+
+**Provider model** — each provider implements a small ops vtable
+([`struct efa_p2p_ops`](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_p2p.h)):
+
+```c
+struct efa_p2p_ops {
+    char *(*get_provider_string)(void);
+    struct efa_p2pmem *(*try_get)(struct efa_dev *dev, u64 ticket, u64 start, u64 length);
+    int   (*to_page_list)(struct efa_dev *dev, struct efa_p2pmem *p2pmem, u64 *page_list);
+    void  (*release)(struct efa_dev *dev, struct efa_p2pmem *p2pmem, bool in_cb);
+    unsigned int (*get_page_size)(struct efa_dev *dev, struct efa_p2pmem *p2pmem);
+};
+```
+
+Registered providers (`efa_p2p_init()` → `p2p_providers_init()`):
+
+| Provider | Backing | Source |
+|----------|---------|--------|
+| `EFA_P2P_PROVIDER_NVMEM_V1` | NVIDIA `nvidia_p2p_*` API, v1 (`nv-p2p.h`) | `efa_nvmem_v1.c` |
+| `EFA_P2P_PROVIDER_NVMEM_V2` | NVIDIA `nvidia_p2p_*` API, v2 (`nv-p2p_v2.h`) | `efa_nvmem_v2.c` |
+| `EFA_P2P_PROVIDER_NEURON` | AWS Neuron `neuron_p2p_*` API (`neuron_p2p.h`) | `efa_neuronmem.c` |
+
+**Registration flow** (`efa_p2p_get()`): on a device-memory `reg_mr`, the driver walks
+the provider array and calls each provider's `try_get()` until one claims the address
+range (NVIDIA providers recognize CUDA allocations; the Neuron provider recognizes
+Trainium/Inferentia memory). The winning provider pins the device pages and returns an
+`efa_p2pmem` handle; `to_page_list()` then produces the DMA addresses the driver
+programs into the hardware page tables via the `reg_mr` admin command.
+
+**The ticket mechanism** — device drivers can revoke peer memory asynchronously (e.g.
+the GPU frees the allocation). Each `efa_p2pmem` is tagged with a monotonic **ticket**
+(`next_p2p_ticket`) and tracked on a global `p2p_list`. When the GPU driver invokes the
+free callback, EFA looks the mapping up *by ticket* (`ticket_to_p2p()`) and releases it
+(`efa_p2p_put(ticket, in_cb=true)`), tearing down the MR safely even though the
+callback runs in the GPU driver's context. The ticket indirection avoids dereferencing
+a pointer that the other driver may already be freeing.
+
+**Relationship to DMA-BUF** — there are two independent paths to register GPU memory:
+
+1. **DMA-BUF** (`efa_reg_user_mr_dmabuf`, see below): the modern, vendor-neutral path.
+   Userspace passes a `dmabuf_fd`; the driver attaches and maps it through the kernel
+   `dma_buf` framework. No EFA-specific peer provider is involved. Requires
+   `HAVE_IB_REG_USER_MR_DMABUF` and a working exporter (and is gated off on EFA Gen 1–3
+   due to a firmware page-merging issue — see `dmabuf-gpu-memory.md`).
+2. **Peer-memory providers** (this subsystem): the legacy/vendor path used when DMA-BUF
+   is unavailable — NVIDIA `nvidia_p2p` (a.k.a. nvidia-peermem) or Neuron `neuron_p2p`.
+
+libfabric's EFA provider chooses DMA-BUF when viable and falls back to the peer-memory
+path otherwise; both ultimately produce a device-page DMA list that the same `reg_mr`
+admin command installs in hardware.
+
 ### 4. mmap Support (`efa_data_verbs.c`)
 
 Userspace needs direct access to queue buffers and doorbells. This is achieved via `mmap()`:
@@ -508,6 +589,65 @@ static int efa_com_admin_q_comp_intr_handler(struct efa_com_admin_queue *aq)
 
     return comp_num;
 }
+```
+
+#### Admin Queue Protocol Internals
+
+The admin queue (AQ) is a classic **producer/consumer ring with a phase (ownership)
+bit**, the same pattern EFA uses for its data-path queues — so understanding it here
+explains the hardware queue model generally.
+
+**Three rings**, each set up in `efa_com.c` with its base address and depth programmed
+into registers via `writel()` on BAR 0:
+- **AQ** (admin submission queue) — `EFA_REGS_AQ_BASE_{LO,HI}_OFF`, caps in `AQ_CAPS`.
+- **ACQ** (admin completion queue) — `EFA_REGS_ACQ_BASE_*`.
+- **AENQ** (async event notification queue) — device-initiated events (link/health).
+
+All three start with `phase = 1` and a producer/consumer counter at 0.
+
+**Submitting a command** (`__efa_com_submit_admin_cmd`):
+```c
+pi = aq->sq.pc & queue_size_mask;          // ring slot
+// command_id packs ctx_id in the LSBs + entropy from pc in the MSBs
+cmd_id  = ctx_id;
+cmd_id |= aq->sq.pc << ilog2(aq->depth);
+set_field(cmd, PHASE, aq->sq.phase);       // stamp current phase into the descriptor
+// ... copy command into ring[pi] ...
+aq->sq.pc++;
+if ((aq->sq.pc & queue_size_mask) == 0)
+    aq->sq.phase = !aq->sq.phase;          // flip phase on wrap
+writel(aq->sq.pc, aq->sq.db_addr);         // ring the doorbell (MMIO write)
+```
+Key points:
+- The **doorbell** is a single MMIO `writel` of the new producer counter to the
+  queue's BAR-mapped `db_addr`; this is what tells the device "new work is posted."
+  No barrier is needed because `writel` to device memory is already ordered.
+- Each in-flight command gets a **`comp_ctx`** drawn from a pool (`comp_ctx_pool`),
+  keyed by `command_id`. The submitter blocks on `comp_ctx->wait_event` (or polls).
+  The `command_id` carries both the context-pool index (LSBs) and entropy bits from
+  the producer counter (MSBs) so a stale completion can't be mismatched to a reused slot.
+
+**Consuming completions** (`efa_com_handle_admin_completion`):
+```c
+phase = aq->cq.phase;
+while (read_field(cqe[ci], PHASE) == phase) {   // descriptor owned by SW?
+    // ... match cqe->command_id -> comp_ctx, store status, complete()
+    if (++ci wrapped) phase = !phase;           // flip on wrap
+}
+```
+The consumer never reads a length/valid flag — it reads the descriptor's **phase bit**
+and compares it to the phase it expects for the current pass. Because the producer
+stamps the current phase and flips on each wrap, a descriptor is "ready" exactly when
+its phase matches the consumer's expected phase. This lets the device and driver share
+a ring with **no extra valid-flag write and no head/tail register round-trip** — the
+hardware just writes the completion (with the right phase) into the next slot. This
+ownership-bit scheme is the same mechanism the **GDAKI** GPU data path uses (see
+`ofi-plugin-protocols.md` → GIN Modes), where the GPU kernel polls SQ/CQ phase bits
+directly.
+
+```c
+// Send command to admin queue (legacy excerpt)
+static int efa_com_admin_q_comp_intr_handler(struct efa_com_admin_queue *aq)
 ```
 
 ## Key Data Structures
