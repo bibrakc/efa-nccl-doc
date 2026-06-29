@@ -191,6 +191,10 @@ for details.
 - Used by workloads like DeepEP (Mixture-of-Experts dispatch)
 - Provides `iput` (data transfer) and `iputSignal` (data + atomic notification)
 - Wraps RDMA transport with additional resource management
+- Two modes selected by `OFI_NCCL_GIN_TYPE`: **PROXY** (default; CPU proxy issues
+  the libfabric writes) and **GDAKI** (`--enable-gdaki` builds; the GPU kernel
+  drives the EFA queues directly — kernel-initiated networking, no CPU on the data
+  path, requires CUDA + DMA-BUF + libfabric 2.5+)
 - See [nccl-ep-vs-deepep-comparison.md](nccl-ep-vs-deepep-comparison.md) for NCCL EP vs DeepEP analysis
 - See [gin-alltoall-libfabric-trace.md](gin-alltoall-libfabric-trace.md) for detailed libfabric call trace
 

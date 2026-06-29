@@ -689,6 +689,76 @@ Receiver                               Sender
 
 ---
 
+## Eager Protocol (Small Messages)
+
+For small messages the rendezvous round-trip (control-message handshake before
+any data moves) dominates latency. The RDMA transport therefore has an **eager**
+path: messages at or below `EAGER_MAX_SIZE` are sent in a single operation that
+carries the payload inline, with no prior control message from the receiver.
+
+- Controlled by `OFI_NCCL_EAGER_MAX_SIZE` (env `EAGER_MAX_SIZE`), default **8192**
+  bytes. Setting it to `-1` disables the eager path entirely.
+- The sender posts the payload (prefixed by an 8-byte eager header) with
+  `fi_sendmsg(..., FI_REMOTE_CQ_DATA)` onto a single rail; the receiver consumes
+  it from a pre-posted **eager receive (rx) buffer**, then copies it into the
+  application destination.
+- Control and eager rx buffers use **separate freelists** and separate posted-rx
+  limits, so eager traffic cannot starve the control path.
+
+### Eager message header
+
+Every eager send prepends an 8-byte header so the receiver can place the payload
+correctly, including in a *grouped* (multi-) receive where several sub-receives
+share one comm:
+
+```c
+// include/nccl_ofi_rdma.h
+typedef struct nccl_ofi_eager_msg_header {
+    uint8_t  eager_offset;       // position of this msg within the eager batch
+    uint8_t  prev_batch_count;   // size of the previous batch (valid when eager_offset == 0)
+    uint16_t eager_seq;          // per-batch sequence number (chain identity)
+    int32_t  tag;                // sub-receive tag within a grouped receive
+} nccl_ofi_eager_msg_header_t;   // NCCL_OFI_EAGER_HEADER_SIZE == 8
+```
+
+The receiver drains its eager queue in batch order via `drain_recv_eager_queue()`,
+using `eager_offset`/`prev_batch_count` to reassemble a batch and `tag` to map each
+sub-message to the right destination buffer.
+
+### Sequence-number wrap safety (`eager_seq`)
+
+Eager batches are chained so the receiver can detect ordering and gaps. An earlier
+implementation chained them using the per-comm `msg_seq_num`, which is **10-bit
+(wraps every 1024)** and is advanced by *all* traffic — including rendezvous/RDMA-write
+messages. Because the control mailbox has only 256 slots, sequence numbers alias
+4-to-1 per slot. Under a long run of write traffic the shared counter could wrap
+while the eager chain trackers were idle, making two eager batches a full wrap apart
+indistinguishable. The receiver's drain then wedged and the collective deadlocked —
+observed in practice at the RING LL→LL128 transition on 16-node all-gather.
+
+The fix (master commit `1a70558`, shipped in v1.20.0) introduces a **dedicated
+`eager_seq`** carried in the header:
+
+- It is advanced **only** for eager batches, never by rendezvous traffic, so write
+  volume can no longer overrun it.
+- It is 16-bit and the number of in-flight eager batches is bounded
+  (`NCCL_OFI_MAX_EAGER_PENDING`, far below 65536), so two live batches can never
+  share an `eager_seq` — wrap-safe by construction.
+- `msg_seq_num` is still used for the receive-side message-buffer lookup (already
+  window-bounded); `eager_seq` is the sole identity used to chain eager batches.
+
+### Eager vs Rendezvous
+
+| | Eager | Rendezvous |
+|---|---|---|
+| Message size | ≤ `EAGER_MAX_SIZE` (default 8 KB) | larger messages |
+| Control handshake | none (payload sent inline) | control message before data |
+| Network op | `fi_sendmsg` (+`FI_REMOTE_CQ_DATA`) | control msg + `fi_write` |
+| Round trips | one-way | round trip before data |
+| Optimizes for | latency (small msgs) | bandwidth (large msgs) |
+
+---
+
 ## Summary
 
 ### Connection Establishment
@@ -794,6 +864,39 @@ transport and adds group communication (all-ranks-to-all-ranks).
 - `src/rdma/gin/nccl_ofi_gin_resources.cpp` — Resource management
 - `src/rdma/gin/nccl_ofi_gin_reqs.cpp` — Request handling (iput, iputSignal)
 - `src/rdma/gin/nccl_ofi_gin_allgather.cpp` — AllGather for handle exchange
+- `src/rdma/gin/nccl_ofi_gin_gdaki.cpp` — GDAKI (kernel-initiated) plugin ([view](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_gdaki.cpp))
+- `src/rdma/gin/nccl_ofi_gin_gdaki_resources.cpp` — GDAKI device-handle/queue resources
+
+### GIN Modes: Proxy vs GDAKI
+
+GIN ships in two variants, selected at runtime by `OFI_NCCL_GIN_TYPE`
+(env `GIN_TYPE`); the plugin exports the corresponding `ncclGin` symbol to NCCL:
+
+- **PROXY** (default): proxy-mode GIN. The GPU kernel enqueues put/putSignal
+  operations and the **CPU proxy thread** issues the underlying libfabric
+  `fi_write`/`fi_writedata` operations on the GPU's behalf. Works on any
+  EFA-capable build.
+- **GDAKI** (`--enable-gdaki` builds only): **kernel-initiated** networking.
+  The GPU kernel drives the EFA queues directly — no CPU proxy on the data path.
+  `createContext` builds a device handle in **GPU memory** describing the send
+  queue (SQ), completion queue (CQ), and receive queue (RQ); the kernel posts
+  WQEs and polls CQEs using EFA's **ownership/phase-bit protocol**. The on-GPU
+  queue layout is compatible with the `efa_cuda_qp` / `efa_cuda_cq` types from
+  `efa-dp-direct`, which NCCL's device code uses directly.
+
+  GDAKI has hard prerequisites: **CUDA**, **DMA-BUF**, and **libfabric 2.5+**
+  (the proxy domain is opened with the 2.5 ABI so the EFA hardware-counter ops
+  are exposed via `fi_open_ops`). Requesting `GIN_TYPE=GDAKI` on a plugin built
+  without GDAKI support fails plugin init with `ncclInvalidUsage` rather than
+  silently falling back to proxy mode.
+
+| | Proxy GIN | GDAKI GIN |
+|---|---|---|
+| Data-path driver | CPU proxy thread (`fi_write`) | GPU kernel (direct EFA queue access) |
+| Build requirement | standard EFA build | `--enable-gdaki` |
+| Runtime prerequisites | EFA | CUDA + DMA-BUF + libfabric 2.5+ |
+| Completion detection | libfabric CQ | EFA hardware counters / phase-bit CQ polling |
+| Default | yes | no (opt-in via `GIN_TYPE=GDAKI`) |
 
 ### GIN Connection Establishment
 
