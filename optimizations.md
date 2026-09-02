@@ -41,10 +41,12 @@ The single largest recent optimization in the stack is libfabric's EFA
 ### What it does
 
 Normally libfabric issues sends/receives and polls completions through
-rdma-core / libibverbs (`ibv_post_send`, `ibv_poll_cq`, …). The direct data path
-**bypasses rdma-core on the data path entirely**: the EFA provider maps the
-hardware SQ/RQ/CQ buffers and doorbells and writes work-queue entries and reads
-completions itself
+rdma-core / libibverbs (`ibv_post_send`, `ibv_poll_cq`, …). With the direct data path,
+**rdma-core is no longer called per operation**: the EFA provider writes work-queue
+entries into the mapped SQ and reads completions from the mapped CQ itself. Note
+this is a sanctioned handoff, not circumvention — rdma-core still creates the QP
+and CQ, gets the kernel to map the queue buffers and doorbell, and then publishes
+their addresses through its `efadv` extensions
 ([prov/efa/src/efa_data_path_direct.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_data_path_direct.c),
 [efa_data_path_ops.h](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_data_path_ops.h)).
 It still uses rdma-core's `efadv` query interfaces to *discover* the hardware

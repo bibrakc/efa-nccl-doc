@@ -164,8 +164,8 @@ EFA Provider (Hardware-Specific)
     │
     ├── data path (default): Data Path Direct — provider writes WQEs into the
     │   mapped SQ, reads CQEs from the mapped CQ, rings the doorbell via MMIO
-    │   ↓                                     (bypasses rdma-core entirely)
-    │   │
+    │   ↓                        (rdma-core not called per operation; it set up
+    │   │                         and published the mappings being written to)
     └── control path: rdma-core (libibverbs) ──┤  device open, QP/CQ create,
         (also the data path when                  MR registration, AH create,
          FI_EFA_USE_DATA_PATH_DIRECT=0)           queue-buffer mmap
@@ -215,8 +215,8 @@ EFA Hardware (p4d: 4×100G EFAv2; p5/p5en/p6: EFAv3; up to 800/1600 Gbps
 4. **Multi-rail** - Utilize all EFA adapters (4-8 per instance)
 5. **CPU Affinity** - Pin proxy threads to avoid NUMA remote access
 6. **Kernel Bypass** - Direct user-space access to hardware
-7. **Data Path Direct** - The EFA provider bypasses rdma-core/libibverbs on the data
-   path by default, removing a call layer per operation. See
+7. **Data Path Direct** - The EFA provider writes descriptors and reads completions
+   itself by default, so rdma-core is not called per operation. See
    [optimizations.md](optimizations.md)
 
 ## Additional Resources

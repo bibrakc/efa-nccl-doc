@@ -25,8 +25,9 @@ current `include/rdma/*.h`.
   (and other XPU-related fields on `fi_ep_attr`/`fi_cq_attr`/`fi_cntr_attr`); the
   previously-missing ABI bump was corrected in 2.7
   (["Fix the missing ABI bump for fi_domain_attr"](https://github.com/ofiwg/libfabric/blob/main/NEWS.md)).
-- **EFA data path bypasses rdma-core by default** —
-  `FI_EFA_USE_DATA_PATH_DIRECT` now defaults to `true`. See
+- **EFA data path no longer calls rdma-core per operation by default** —
+  `FI_EFA_USE_DATA_PATH_DIRECT` now defaults to `true`. rdma-core still owns the control
+  path and publishes the queue/doorbell pointers the provider writes to. See
   [Libfabric with EFA → Data Path Direct](#efa-data-path-direct-default) and the deeper
   treatment in [efa-provider.md](efa-provider.md) and
   [rdma-core-and-verbs.md](rdma-core-and-verbs.md).

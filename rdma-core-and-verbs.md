@@ -855,7 +855,9 @@ sudo chmod 666 /dev/infiniband/uverbs*
 1. rdma-core provides the **verbs API** and, for EFA, always owns the **control
    path** (device open, QP/CQ creation, MR registration, AH creation, queue mmap)
 2. EFA provider in rdma-core implements EFA-specific optimizations
-3. **By default the data path bypasses rdma-core** via EFA Data Path Direct
+3. **By default rdma-core is not called per operation on the data path** — libfabric
+   writes the descriptors itself into mappings rdma-core created and published via
+   `efadv_query_qp_wqs()` / `efadv_query_cq()`. This is EFA Data Path Direct
    (`FI_EFA_USE_DATA_PATH_DIRECT=true`, libfabric 2.3.0+, RDM-enabled in 2.7.0);
    the libibverbs `ibv_wr_*` / `ibv_start_poll` data path is the fallback
 4. Post/poll operations are **extremely fast** on either path (no syscalls, just

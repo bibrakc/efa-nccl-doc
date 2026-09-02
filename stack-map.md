@@ -247,6 +247,23 @@ EFA provider formats WQEs and reads CQEs **itself** instead of calling
 does device open/probe, QP and CQ creation, MR registration, AH creation, and the `mmap` —
 then steps out of the way.
 
+Read "bypass" carefully here — it means *not called per operation*, not *circumvented*.
+rdma-core is the only thing that can create a QP, and it deliberately hands libfabric the
+pointers to write to, through its EFA direct-verbs extensions:
+
+```c
+efadv_query_qp_wqs(efa_qp->ibv_qp, &sq_attr, &rq_attr, ...);
+direct_qp->sq.wq.db = sq_attr.doorbell;   /* the hardware doorbell register */
+efadv_query_cq(..., &attr, ...);          /* the mapped CQ buffer + its doorbell */
+```
+
+libfabric then does, per send, `mmio_memcpy_x64()` of a 64- or 128-byte WQE into
+`sq->desc + idx * wqe_size` (write-combined memory), `mmio_flush_writes()`, and
+`mmio_write32(sq->wq.db, pc)`. It is writing into memory rdma-core established and
+published. Declarations live in
+[`providers/efa/efadv.h`](https://github.com/linux-rdma/rdma-core/blob/master/providers/efa/efadv.h)
+on the rdma-core side.
+
 **Takeaway:** "libfabric calls rdma-core which calls the kernel" is **wrong for the data
 path**. On the send path, libfabric talks to the NIC directly through the mapped queues;
 rdma-core set things up and the kernel is not involved. Cite

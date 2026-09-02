@@ -306,9 +306,10 @@ static ssize_t efa_msg_send(struct fid_ep *ep, const void *buf,
 
 Since the EFA provider defaults to `FI_EFA_USE_DATA_PATH_DIRECT=true`
 ([efa_env.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_env.c),
-`.use_data_path_direct = true`), the send fast path **bypasses rdma-core
-entirely**. The provider builds the WQE and writes it into the memory-mapped
-send queue itself.
+`.use_data_path_direct = true`), the send fast path **does not call rdma-core at
+all per operation**. The provider builds the WQE and writes it into the
+memory-mapped send queue itself — into a mapping rdma-core created at QP setup and
+published via `efadv_query_qp_wqs()`.
 
 **Post send** ([efa_data_path_direct_entry.h](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_data_path_direct_entry.h) - `efa_data_path_direct_post_send`):
 
