@@ -56,12 +56,37 @@ The owner class determines the mechanism for a change:
 ## 2. The spine: userspace vs kernel
 
 The entire stack splits at one line — the `/dev/infiniband/uverbsN` character device. Above
-it, four libraries are all loaded into the *same training process*. Below it, the kernel
+it, four libraries are all loaded into the *same OS process* — one process per rank, typically
+one rank per GPU, so eight such processes on a p5. This is not a client/server arrangement:
+there is no daemon, no IPC and no context switch between NCCL, the plugin, libfabric and
+libibverbs. They are shared objects in one address space calling each other through ordinary
+function calls. Verified on a built plugin:
+
+```
+$ ldd libnccl-net-ofi.so
+    libfabric.so.1   => /opt/libfabric/lib/libfabric.so.1
+    libefa.so.1      => /lib64/libefa.so.1        # rdma-core's EFA provider
+    libibverbs.so.1  => /lib64/libibverbs.so.1
+```
+
+NCCL `dlopen()`s the plugin (`src/plugin/plugin_open.cc`, `openPluginLib()`), the plugin's
+dynamic dependencies pull in libfabric and libibverbs, and libfabric may itself `dlopen()`
+providers (`src/fabric.c`). Four practical consequences:
+
+- The mapped send/receive/completion queues and the doorbell page live in **this** process's
+  virtual address space. That is what "OS bypass" means concretely.
+- A segfault anywhere in the chain kills the rank, and takes the job down with it.
+- One `gdb` attach to one PID sees every layer's frames at once, which is why the GDB workflow
+  in `ect-ofi-nccl-gdb-debug` works the way it does.
+- Each rank has its own queue pairs, its own MR cache and its own copy of the libraries.
+  Nothing is shared between ranks on the same host except what the NIC and the kernel own.
+
+Below it, the kernel
 modules. **Read section 4 before you conclude that this layering describes the send path —
 it does not.**
 
 ```
- USERSPACE  (all dlopen'd/linked into the training process)
+ USERSPACE  (one process per rank; all of this in that process's address space)
  ┌───────────────────────────────────────────────────────────────────────┐
  │ NCCL           libnccl.so                       NVIDIA/nccl             │
  │ aws-ofi-nccl   libnccl-net-ofi.so (dlopen'd)    aws/aws-ofi-nccl  ◄ ECT │
