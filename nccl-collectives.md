@@ -17,7 +17,7 @@ Rank 3: [A3] ─┘
 
 **API:**
 
-**`ncclAllReduce()`** - AllReduce collective operation ([nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h) - NCCL external API):
+**`ncclAllReduce()`** - AllReduce collective operation ([src/nccl.h.in](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in) - NCCL external API):
 
 ```c
 ncclAllReduce(const void* sendbuff, void* recvbuff,
@@ -51,7 +51,7 @@ Rank 3: receives [Data]
 
 **API:**
 
-**`ncclBroadcast()`** - Broadcast collective operation ([nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h) - NCCL external API):
+**`ncclBroadcast()`** - Broadcast collective operation ([src/nccl.h.in](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in) - NCCL external API):
 
 ```c
 ncclBroadcast(const void* sendbuff, void* recvbuff,
@@ -78,7 +78,7 @@ Rank 3: [A3] ─┘
 
 **API:**
 
-**`ncclReduce()`** - Reduce collective operation ([nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h) - NCCL external API):
+**`ncclReduce()`** - Reduce collective operation ([src/nccl.h.in](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in) - NCCL external API):
 
 ```c
 ncclReduce(const void* sendbuff, void* recvbuff,
@@ -100,7 +100,7 @@ Rank 3: [A3] ─┘
 
 **API:**
 
-**`ncclAllGather()`** - AllGather collective operation ([nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h) - NCCL external API):
+**`ncclAllGather()`** - AllGather collective operation ([src/nccl.h.in](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in) - NCCL external API):
 
 ```c
 ncclAllGather(const void* sendbuff, void* recvbuff,
@@ -126,7 +126,7 @@ Rank 3: [A3] ─┘                    Rank 3: [sum(A3_chunk3)]
 
 **API:**
 
-**`ncclReduceScatter()`** - ReduceScatter collective operation ([nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h) - NCCL external API):
+**`ncclReduceScatter()`** - ReduceScatter collective operation ([src/nccl.h.in](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in) - NCCL external API):
 
 ```c
 ncclReduceScatter(const void* sendbuff, void* recvbuff,
@@ -144,7 +144,7 @@ ncclReduceScatter(const void* sendbuff, void* recvbuff,
 
 **Operation**: Point-to-point communication between two ranks.
 
-**`ncclSend()` / `ncclRecv()`** - Point-to-point send/receive operations ([nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h) - NCCL external API):
+**`ncclSend()` / `ncclRecv()`** - Point-to-point send/receive operations ([src/nccl.h.in](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in) - NCCL external API):
 
 ```c
 // Sender
@@ -540,7 +540,8 @@ Time = Latency * 2 * log2(N) + (2 * Size) / (BandwidthPerLink * TreeWidth)
 - **Ring** - Bandwidth-optimal, O(N) latency
 - **Tree** - Latency-optimal, O(log N) latency
 - **CollNet** - Switch-assisted collectives (IB SHARP)
-- **NVLS** - NVLink SHARP (H100+)
+- **NVLS** / **NVLS Tree** - NVLink SHARP (Hopper H100/H200+, Blackwell B200/B300)
+- **PAT** - Parallel Aggregated Trees for AllGather/ReduceScatter at scale (NCCL 2.23+; used through 2.31). See [algorithms/pat-algorithm.md](algorithms/pat-algorithm.md).
 
 ### Protocols
 

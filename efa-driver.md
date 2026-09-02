@@ -4,7 +4,20 @@
 
 The EFA (Elastic Fabric Adapter) driver is a Linux kernel driver that provides the interface between user-space applications (via libfabric) and the EFA hardware. It's based on the RDMA subsystem but with EFA-specific extensions.
 
-**Driver Location**: `drivers/infiniband/hw/efa/` in Linux kernel
+**Driver Location**: `drivers/infiniband/hw/efa/` in Linux kernel (out-of-tree
+build: [amzn-drivers `kernel/linux/efa/`](https://github.com/amzn/amzn-drivers/tree/master/kernel/linux/efa))
+
+**Driver Version**: **r3.3.0** (`DRV_MODULE_VER_MAJOR/MINOR/SUBMINOR = 3/3/0`,
+[efa_main.c](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_main.c) lines ~42-44).
+See [kernel-efa-driver.md](kernel-efa-driver.md) for the detailed r3.3.0 change list.
+
+> **Data-path note.** The `ibv_post_send()` / `ibv_poll_cq()` pseudo-code below
+> illustrates the WQE/CQE mechanism the driver sets up. As of libfabric 2.3.0+
+> (RDM-enabled in 2.7.0), the libfabric EFA provider by default drives these
+> mapped SQ/RQ/CQ buffers itself via **Data Path Direct** rather than calling
+> libibverbs on the data path — see [rdma-core-and-verbs.md](rdma-core-and-verbs.md).
+> Either way the kernel driver's role is unchanged: it only sets up the queues,
+> doorbells and memory mappings (control path).
 
 ## Architecture
 
@@ -115,16 +128,32 @@ struct efa_com_get_device_attr_result {
   u32 max_mr_pages;        // Max pages per MR
   u32 max_qp_wr;           // Max WRs per QP (~8K)
   u32 max_cq_depth;        // Max CQ entries
-  u32 max_inline_data;     // Max inline send (~32 bytes)
+  u32 max_inline_data;     // Max inline send (32 B on 64-B WQE, 80 B on 128-B WQE)
   u32 max_sge;             // Max scatter-gather entries
   u32 max_mtu;             // Max MTU (~8K)
 
   // EFA-specific
   u16 sub_cqs_per_cq;      // Completion sub-queues
   u32 max_rdma_size;       // Max RDMA transfer (~1 GB)
+  u16 max_link_speed_gbps; // Device max link speed in Gbit/s (up to 800/1600)
   u8 device_version;       // Hardware version
+  u32 device_caps;         // Capability bitmask (see below)
 };
 ```
+
+**Capability bits relevant to r3.3.0** (queried via `EFADV`/`EFA_QUERY_DEVICE_CAPS_*`):
+- `EFA_QUERY_DEVICE_CAPS_SQ_64_BIT_REQ_ID` — SQ supports 64-bit work request IDs
+  (userspace `EFADV_WQ_CAPS_64_BIT_REQ_ID`).
+- `EFA_QUERY_DEVICE_CAPS_DATA_POLLING_128` — 128-byte WQE / wide-WQE support
+  (enables inline RDMA WRITE).
+- Hardware **completion counters** (event counters) via the
+  `EFA_ADMIN_*_EVENT_COUNTER` admin opcodes; device reports `max_event_counters`,
+  `event_counter_max_val`, `supported_event_counter_qp_events` (QUEUE_ATTR_2).
+  These back GDAKI / GPU-initiated completion tracking.
+- Extended MR page-shift field enabling **>4 GB MR page sizes**.
+- Link speeds of **800 and 1600 Gbps** reported via `max_link_speed_gbps` and the
+  new `efa_query_port_speed()` verb.
+- New PCI device ID **0xefa4** enumerated by the driver.
 
 ## Memory Management
 
@@ -813,6 +842,13 @@ Multiple EFAs per instance:
 - **Polling-optimized**: Low latency via polling
 - **Multi-rail capable**: Support for multiple NICs
 - **SRD transport**: Reliable, connectionless, scalable
+
+**r3.3.0 additions** (see [kernel-efa-driver.md](kernel-efa-driver.md)):
+- Hardware **completion counters** (used by GDAKI / GPU-initiated data paths)
+- **64-bit work request IDs** and **128-byte WQEs** with **inline RDMA WRITE**
+- **800 / 1600 Gbps** link-speed reporting + query-port-speed verb
+- **0xefa4** device ID, admin-response **checksum validation**, **>4 GB MR page
+  sizes**, and an **rhashtable AH cache** for AH device-object reuse
 
 **Bottlenecks:**
 - **PCIe bandwidth**: ~25 GB/s limit (Gen4 x16)

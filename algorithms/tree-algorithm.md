@@ -20,7 +20,12 @@ The **Tree algorithm** (specifically NCCL's **Double Binary Tree**) is a latency
 - Data movement: Each GPU sends and receives approximately S bytes
 - Scalability: Excellent for thousands of GPUs
 
-**Source**: [NCCL source: src/graph/trees.cc](https://github.com/NVIDIA/nccl)
+**Source**: The double binary tree is constructed by `ncclGetDtree()` / `ncclGetBtree()`
+in [nccl/src/graph/trees.cc](https://github.com/NVIDIA/nccl/blob/master/src/graph/trees.cc);
+these per-node trees are wired across nodes in
+[src/graph/connect.cc](https://github.com/NVIDIA/nccl/blob/master/src/graph/connect.cc)
+(calls to `ncclGetDtree`), and the device-side reduce/broadcast steps run in
+[src/device/all_reduce.h](https://github.com/NVIDIA/nccl/blob/master/src/device/all_reduce.h).
 
 ## Binary Tree Topology
 
@@ -35,6 +40,13 @@ A binary tree with N GPUs has:
 Each GPU has:
 - Up to 2 children (left and right)
 - 1 parent (except root)
+
+> Implementation note: the per-tree *btree* built by `ncclGetBtree()` is genuinely binary
+> (each node has `d0`/`d1`), so the mathematical derivation below assumes 2 children. NCCL's
+> device tree structure, however, allows `NCCL_MAX_TREE_ARITY = 3` children
+> ([nccl/src/include/device.h, line 193](https://github.com/NVIDIA/nccl/blob/master/src/include/device.h))
+> so that an inter-node tree parent can also fan out to intra-node local ranks. This does
+> not change the O(log N) latency scaling.
 
 **Example for N=8 GPUs**:
 ```
@@ -63,37 +75,47 @@ Each GPU has:
 
 ### Example Double Binary Tree (N=8)
 
-**Tree 1** (handles first half of data):
+The following is the **actual** output of NCCL's `ncclGetDtree(8, rank)` (mirror case,
+since `nranks = 8` is even) from
+[src/graph/trees.cc](https://github.com/NVIDIA/nccl/blob/master/src/graph/trees.cc). Note
+that NCCL's btree roots the first tree at rank 0 with a single child, so the trees are
+"caterpillar" binary trees rather than the perfectly balanced tree drawn in textbooks.
+
+**Tree 0** (root 0 — parent/children per rank: 0→[4]; 4→[2,6]; 2→[1,3]; 6→[5,7]):
 ```
-         GPU 0 (root)
-        /            \
-     GPU 2          GPU 4
-    /     \        /     \
-  GPU 1  GPU 3  GPU 5  GPU 7
-                   |
-                 GPU 6
+        0
+        |
+        4
+       / \
+      2   6
+     / \ / \
+    1  3 5  7
 ```
 
-**Tree 2** (handles second half of data):
+**Tree 1** (mirror; root 7 — 7→[3]; 3→[1,5]; 1→[2,0]; 5→[6,4]):
 ```
-         GPU 1 (root)
-        /            \
-     GPU 3          GPU 5
-    /     \        /     \
-  GPU 0  GPU 2  GPU 4  GPU 6
-                   |
-                 GPU 7
+        7
+        |
+        3
+       / \
+      1   5
+     / \ / \
+    2  0 6  4
 ```
 
-**Property Check**:
-- GPU 0: Root in Tree 1, Leaf in Tree 2 ✓
-- GPU 1: Leaf in Tree 1, Root in Tree 2 ✓
-- GPU 2: Internal in Tree 1, Leaf in Tree 2 ✓
-- GPU 3: Leaf in Tree 1, Internal in Tree 2 ✓
-- GPU 4: Internal in Tree 1, Leaf in Tree 2 ✓
-- GPU 5: Leaf in Tree 1, Internal in Tree 2 ✓
-- GPU 6: Leaf in both trees (allowed for ≤ 1 GPU) ✓
-- GPU 7: Leaf in both trees ✗ (would need adjustment)
+**Property Check** (from the computed parent/child relations above):
+- GPU 0: Root in Tree 0, Leaf in Tree 1 ✓
+- GPU 1: Leaf in Tree 0, Internal in Tree 1 ✓
+- GPU 2: Internal in Tree 0, Leaf in Tree 1 ✓
+- GPU 3: Leaf in Tree 0, Internal in Tree 1 ✓
+- GPU 4: Internal in Tree 0, Leaf in Tree 1 ✓
+- GPU 5: Leaf in Tree 0, Internal in Tree 1 ✓
+- GPU 6: Internal in Tree 0, Leaf in Tree 1 ✓
+- GPU 7: Leaf in Tree 0, Root in Tree 1 ✓
+
+Every rank that is internal (non-leaf) in one tree is a leaf in the other, so no rank is a
+bottleneck in both trees — this is the double-tree invariant. (The construction algorithm
+itself is described in detail in the *Tree Construction in NCCL* section below.)
 
 ## Algorithm Phases
 
@@ -461,18 +483,50 @@ Correctly: Tree is better for small S, Ring for large S
 
 ### Tree Building Algorithm
 
-NCCL constructs trees based on GPU topology:
-- **NVLink**: Prefer NVLink connections (higher bandwidth)
-- **PCIe**: Use PCIe when NVLink unavailable
-- **Network**: Inter-node connections
+In NCCL the double binary tree is applied **across nodes** (the inter-node dimension):
+intra-node the GPUs are connected by the NVLink/PCIe rings/topology, and the two binary
+trees connect one representative rank per node. The trees themselves are built by
+`ncclGetDtree()` in
+[nccl/src/graph/trees.cc](https://github.com/NVIDIA/nccl/blob/master/src/graph/trees.cc)
+and wired up by `ncclGetDtree` callers in
+[src/graph/connect.cc](https://github.com/NVIDIA/nccl/blob/master/src/graph/connect.cc)
+(lines ~148 and ~275).
 
-**Goal**: Minimize bandwidth bottlenecks
+The construction is **not** an ad-hoc "invert to avoid common nodes"; it is a precise
+bit-manipulation scheme (verified in `trees.cc`):
 
-**Example** (8 GPUs in single node with NVLink):
+1. **First tree** — `ncclGetBtree()` builds a binary tree rooted at rank 0 that
+   *alternates leaves and internal nodes*. Because there are `pow2 − 1`-style rank
+   patterns, parent/child relationships are found by locating the first non-zero bit of
+   the rank and manipulating bits:
+   - parent: `xx01[0] → xx10[0]` (or `xx00[0]` if out of bounds); `xx11[0] → xx10[0]`
+   - children: `xx10[0] → xx01[0]` and `xx10[0] → xx11[0]` (or `-1` for leaves)
+
+2. **Second tree** — derived from the first by `ncclGetDtree()`:
+   - **even `nranks`**: a **mirror** tree — take the btree of rank `nranks−1−rank` and map
+     each node `u` back via `nranks−1−u`.
+   - **odd `nranks`**: a **shift by one** — take the btree of `(rank−1+nranks) % nranks`
+     and map each node `u` back via `(u+1) % nranks`.
+
+   This construction guarantees the double-tree property: no rank is a non-leaf in both
+   trees, so no single rank is a bandwidth bottleneck, and each tree carries half the
+   data.
+
+**Illustration from the source** (comment in `trees.cc`, `nranks = 12`, mirror case):
+
 ```
-Tree 1: Follows NVLink topology
-Tree 2: Inverted to avoid common internal nodes
+First tree (root 0)                    Second tree (mirror)
+ 0---------------8                      3----------------11
+          ______/ \                    / \______
+         4         \                  /         7
+       /   \        \                /        /   \
+     2       6       10            1        5      9
+    / \     / \     /  \          / \      / \    / \
+   1   3   5   7   9   11        0   2    4   6  8   10
 ```
+
+**Goal**: Minimize bandwidth bottlenecks — since no rank is internal in both trees, the
+root's traffic in one tree is offset by it being a leaf in the other.
 
 ### Multi-Node Trees
 
@@ -567,4 +621,4 @@ Similar to Ring, Tree can pipeline chunks:
 **References**:
 1. [Massively Scale Your Deep Learning Training with NCCL 2.4](https://developer.nvidia.com/blog/massively-scale-deep-learning-training-nccl-2-4/)
 2. [Demystifying NCCL: An In-depth Analysis](https://arxiv.org/html/2507.04786v1)
-3. NCCL Source Code: [src/graph/trees.cc](https://github.com/NVIDIA/nccl)
+3. NCCL Source Code: [src/graph/trees.cc](https://github.com/NVIDIA/nccl/blob/master/src/graph/trees.cc) (`ncclGetDtree`/`ncclGetBtree`), [src/graph/connect.cc](https://github.com/NVIDIA/nccl/blob/master/src/graph/connect.cc) (inter-node tree wiring), [src/device/all_reduce.h](https://github.com/NVIDIA/nccl/blob/master/src/device/all_reduce.h) (device reduce/broadcast)

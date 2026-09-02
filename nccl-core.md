@@ -55,7 +55,7 @@ Node 1                          Node 2
 
 ### Communicator
 
-**`ncclComm_t`** - Communicator handle ([NCCL nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h) - NCCL core, opaque structure):
+**`ncclComm_t`** - Communicator handle ([NCCL src/nccl.h.in](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in) - NCCL core, opaque structure):
 
 ```c
 ncclComm_t comm;
@@ -222,6 +222,16 @@ typedef struct {
 ```
 
 **OFI Plugin implements this interface using libfabric** - See [ofi-plugin.md](ofi-plugin.md) for implementation details.
+
+> **ABI note (NCCL v2.31.2-1).** The struct above is a *simplified, illustrative*
+> view of the classic net interface. The current net-plugin ABI NCCL core looks up
+> is **`ncclNetPlugin_v12`** (`typedef ncclNet_v12_t ncclNet_t;` in
+> [nccl/src/include/plugin/nccl_net.h](https://github.com/NVIDIA/nccl/blob/master/src/include/plugin/nccl_net.h)),
+> with backward-compatible shims for v6–v11. Real signatures differ from the sketch
+> above (e.g. `isend`/`irecv` take extra size/tag arrays and per-request phints, and
+> there are device-side / GPU-initiated-networking (GIN) and RMA entry points). The
+> sketch is kept for conceptual clarity; consult the versioned `net_v*.h` headers for
+> the exact current ABI.
 
 ## Configuration and Tuning
 

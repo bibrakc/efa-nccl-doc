@@ -519,7 +519,10 @@ rocm-smi --showversion
 
 **Solution**: Use MR cache aggressively
 ```bash
-export NCCL_OFI_MR_CACHE_SIZE=8192  # Increase cache
+# There is no NCCL_OFI_MR_CACHE_SIZE variable. Plugin/provider MR cache controls:
+export OFI_NCCL_MR_CACHE_DISABLE=0   # 0 = plugin MR cache enabled (default)
+export FI_EFA_MR_MAX_CACHED_SIZE=<bytes>
+export FI_EFA_MR_MAX_CACHED_COUNT=<n>
 ```
 
 ### Problem: "Invalid buffer pointer" error
@@ -557,6 +560,18 @@ if (mem_type != hipMemoryTypeDevice) {
 5. Registration expensive (100-500 μs) - **MR caching essential**
 6. Performance similar to CUDA, easier to maintain (fewer special cases)
 7. Fallback to legacy methods if dmabuf unsupported
+8. DMA-BUF is **no longer gated by EFA generation** in the plugin (the EFA Gen 1-3 device-id
+   check was removed in commit `0f285d5`); see [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md).
+
+### Related upstream changes
+
+- **EFA driver r3.3.0** adds >4GB MR page-size support and an extended page-shift field in MR
+  registration (amzn-drivers `bf83e44`, `a1e35dc`), improving large AMD GPU registrations.
+- **libfabric 2.7** (`main`, verified against `cb6364e05`, 2.7.0rc1) adds ROCr/hmem
+  improvements paralleling the CUDA ones: async copy operations and dmabuf-fd retrieval via
+  `rocr_hmem_get_dmabuf_fd()` / `rocr_hmem_put_dmabuf_fd()`
+  ([src/hmem_rocr.c](https://github.com/ofiwg/libfabric/blob/main/src/hmem_rocr.c),
+  used by [prov/efa/src/efa_hmem.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_hmem.c)).
 
 **Related Documentation**:
 - [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) - DMA-BUF framework (used by ROCm)

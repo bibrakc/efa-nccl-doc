@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document provides ground-truth analysis of how NCCL breaks down messages for all collective operations, from application-level message size down to individual libfabric `fi_send()` calls. All information is verified from **NCCL 2.28.9 source code**.
+This document provides ground-truth analysis of how NCCL breaks down messages for all collective operations, from application-level message size down to individual libfabric `fi_send()` calls. Information was originally verified from **NCCL 2.28.9 source code** and re-checked against **NCCL v2.31.2-1**; the message-breakdown primitives cited here (`NCCL_STEPS = 8`, 4 MiB default buffer, `calcCollChunking()`, per-collective chunk/slice steps) are unchanged in 2.31. In current NCCL, `enqueue.cc` lives at `src/enqueue/enqueue.cc`; the `nccl-2.28.9-1/...` paths and line numbers below are historical.
 
 ## Source Code References
 
@@ -18,7 +18,7 @@ This document provides ground-truth analysis of how NCCL breaks down messages fo
 
 ### NCCL_STEPS Definition
 
-**File**: `nccl-2.28.9-1/src/include/device.h` ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/include/device.h#L24))
+**File**: [src/include/device.h](https://github.com/NVIDIA/nccl/blob/master/src/include/device.h) (NCCL 2.28.9 lines 24)
 
 ```c
 #define NCCL_STEPS 8
@@ -26,7 +26,7 @@ This document provides ground-truth analysis of how NCCL breaks down messages fo
 
 ### Collective-Specific Constants
 
-**File**: `nccl-2.28.9-1/src/include/collectives.h` ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/include/collectives.h#L16-L32))
+**File**: [src/include/collectives.h](https://github.com/NVIDIA/nccl/blob/master/src/include/collectives.h) (NCCL 2.28.9 lines 16-32)
 
 ```c
 // CHUNKSIZE must be a multiple of SLICESIZE
@@ -102,7 +102,7 @@ total_steps = 2 × log₂(num_ranks)
 
 ### Step 3: Chunk and Slice Sizes
 
-**File**: `nccl-2.28.9-1/src/enqueue.cc` - `calcCollChunking()` function ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/enqueue.cc#L2022-L2027))
+**File**: `src/enqueue.cc` - `calcCollChunking()` function ([src/enqueue/enqueue.cc](https://github.com/NVIDIA/nccl/blob/master/src/enqueue/enqueue.cc), NCCL 2.28.9 lines 2022-2027)
 
 ```c
 int stepSize   = comm->buffSizes[info->protocol]/NCCL_STEPS;
@@ -130,7 +130,7 @@ chunkSize = ((stepSize × chunkSteps) / NCCL_LL128_LINEELEMS) × NCCL_LL128_DATA
 
 ### Step 4: Network Sends
 
-**File**: `nccl-2.28.9-1/src/transport/net.cc` - `sendProxyProgress()` function ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/transport/net.cc#L1322))
+**File**: `src/transport/net.cc` - `sendProxyProgress()` function ([src/transport/net.cc](https://github.com/NVIDIA/nccl/blob/master/src/transport/net.cc), NCCL 2.28.9 lines 1322)
 
 ```c
 // One isend() call per slice
@@ -145,7 +145,7 @@ NCCLCHECK(proxyState->ncclNet->isend(
 ));
 ```
 
-**Context** ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/transport/net.cc#L1245-L1250)):
+**Context** ([src/transport/net.cc](https://github.com/NVIDIA/nccl/blob/master/src/transport/net.cc), NCCL 2.28.9 lines 1245-1250):
 
 ```c
 int stepSize = resources->buffSizes[p] / NCCL_STEPS;
@@ -790,6 +790,6 @@ NCCL_DEBUG_SUBSYS=INIT,GRAPH,ENV,NET
 
 **Last Updated**: 2026-01-29
 
-**Source**: NCCL 2.28.9 source code analysis
+**Source**: NCCL 2.28.9 source code analysis, re-verified against NCCL v2.31.2-1 (chunk/slice/buffer primitives unchanged)
 
 **License**: Same as efa-nccl-doc repository

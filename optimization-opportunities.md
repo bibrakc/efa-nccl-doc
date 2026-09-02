@@ -4,6 +4,36 @@
 
 Based on analysis of the NCCL + OFI + libfabric + EFA stack, this document identifies high-impact optimization opportunities organized by priority and expected performance gain.
 
+> **Status update (2026 refresh).** Several items that were "opportunities" in
+> earlier revisions of this document have since **landed upstream**. Treat the
+> aspirational sections below as historical/forward-looking analysis and read
+> this status list first:
+>
+> - **Direct data path (bypass rdma-core on the hot path): DONE.** libfabric's
+>   `FI_EFA_USE_DATA_PATH_DIRECT` now defaults to TRUE — the EFA provider writes
+>   WQEs and reads completions directly (128-byte wide WQEs, 64-bit request IDs).
+>   This realizes much of the "Hot Path Software Overhead" reduction discussed
+>   below. See optimizations.md.
+> - **Lock-free hot path / per-thread progress: largely DONE.** The EFA provider
+>   moved peer maps, the srx lock, and queued-progress lists off the shared
+>   domain onto per-endpoint / per-CQ structures with lock-free reads
+>   (`efa_av_array`), and CQ progress now skips idle endpoints via a
+>   `progress_ep_list`. aws-ofi-nccl added multi-threaded GIN progress
+>   (`NCCL_GIN_PROXY_NTHREADS`) with per-thread endpoint bucketing and lock-free
+>   MPSC/SPSC rings. See threading-model.md.
+> - **Doorbell batching: DONE (GIN).** `FI_MORE`-based doorbell coalescing on the
+>   GIN aggregate hint batches multiple ops behind one doorbell.
+> - **Request pooling / placement-new: DONE.** RDMA request objects are
+>   placement-new'd out of the freelist (class hierarchy of subclasses), so the
+>   "Request Object Pooling" idea below is implemented in a type-safe form. See
+>   freelist-allocator.md.
+> - **Protocol default change:** eager messages are now OFF by default
+>   (`OFI_NCCL_EAGER_MAX_SIZE=-1`); any protocol-tuning advice that assumed eager
+>   was on should be re-evaluated.
+>
+> The remaining sections still describe *potential* improvements (some now
+> partially realized). Numbers are estimates unless stated otherwise.
+
 ## Optimization Priority Matrix
 
 | Priority | Optimization Area | Estimated Gain | Complexity | Pages |
@@ -416,9 +446,10 @@ Proposed Hybrid:
 From [efa-provider.md](efa-provider.md):
 
 ```
-Eager threshold: 64 KB (configurable via FI_EFA_RDM_LONG_MSG_SIZE)
-Below: Single-copy eager
-Above: RDMA-based rendezvous
+Medium-protocol ceiling:   64 KB  (FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE)
+Read/rendezvous floor:      1 MB  (FI_EFA_INTER_MIN_READ_MESSAGE_SIZE)
+Below the read floor: eager / medium / longcts (copy-based)
+At or above it:       RDMA-read based rendezvous
 ```
 
 **Current Mismatch**:
@@ -429,11 +460,17 @@ Above: RDMA-based rendezvous
 **Proposed**: Align NCCL protocols with EFA thresholds
 
 ```bash
-# Tune EFA for NCCL's patterns
-FI_EFA_RDM_LONG_MSG_SIZE=2097152  # Match NCCL's 2MB threshold
+# Tune EFA for NCCL's patterns.
+# NOTE: there is no FI_EFA_RDM_LONG_MSG_SIZE variable. The real knob that moves the
+# copy-vs-RDMA-read boundary is the read-protocol floor:
+FI_EFA_INTER_MIN_READ_MESSAGE_SIZE=2097152   # 2 MB (default 1 MB)
+FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=65536   # 64 KB medium-protocol ceiling (default)
 
 # Or tune NCCL to EFA
-NCCL_PROTO_LL128_MAX_SIZE=65536   # Match EFA's 64KB eager
+# NOTE: there is no NCCL_PROTO_LL128_MAX_SIZE variable. Protocol crossover points live
+# in NCCL's cost model (src/tuning/) and in the aws-ofi-nccl tuner region tables; the
+# only user-facing protocol control is the include/exclude list:
+NCCL_PROTO=LL128,Simple           # or ^LL128 to exclude it
 ```
 
 **Expected Gain**: Estimated 15-25% for 64KB-2MB range

@@ -83,7 +83,7 @@ From [amzn-drivers/kernel/linux/efa/SRD.txt](https://github.com/amzn/amzn-driver
 
 **Work Request Format**:
 
-**`struct ib_srd_wr`** ([efa_verbs.h:13-18](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L13-L18)):
+**`struct ib_srd_wr`** ([efa_verbs.h:13-18](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h)):
 
 ```c
 struct ib_srd_wr {
@@ -254,6 +254,12 @@ From AWS research and measurements:
 - p4d instances: 400 Gbps total (4×100G EFAs)
 - p5 instances: 3200 Gbps total (32×100G EFAs)
 - Multi-flow aggregation achieves near-theoretical maximum
+- **Newer EFA generations report per-link speeds of 800 Gbps and 1600 Gbps**
+  (EFA kernel driver **r3.3.0**: `efa_link_gbps_to_speed_and_width()` maps
+  ≥1600 → `IB_SPEED_XDR`, ≥800 → `IB_SPEED_NDR`; the device advertises
+  `max_link_speed_gbps` and a new query-port-speed verb). At these link rates a
+  single 25 Gbps SRD flow still relies on multipath/multi-flow aggregation to
+  fill the link. See [efa-hardware-architecture.md](efa-hardware-architecture.md).
 
 **Message Rate**:
 - Small messages (64B): ~10-15 Mpps per QP
@@ -371,7 +377,7 @@ From AWS research and measurements:
 
 Using libibverbs/rdma-core API.
 
-**`struct ibv_qp_init_attr`** ([verbs.h:945-953](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L945-L953)):
+**`struct ibv_qp_init_attr`** ([verbs.h:945-953](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h)):
 
 ```c
 struct ibv_qp_init_attr qp_attr = {
@@ -394,7 +400,7 @@ struct ibv_qp *qp = ibv_create_qp(pd, &qp_attr);
 
 ### Posting Send Request
 
-**`struct ibv_ah_attr`** ([verbs.h:788-796](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L788-L796)):
+**`struct ibv_ah_attr`** ([verbs.h:788-796](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h)):
 
 ```c
 // Create Address Handle for destination
@@ -441,7 +447,7 @@ ibv_post_send(qp, (struct ibv_send_wr *)&wr, &bad_wr);
 
 ### Receiving Messages
 
-**`struct ibv_sge`** ([verbs.h:1172-1176](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L1172-L1176)):
+**`struct ibv_sge`** ([verbs.h:1172-1176](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h)):
 
 ```c
 // Post receive buffers (same as UD)
@@ -452,7 +458,7 @@ struct ibv_sge sge = {
 };
 ```
 
-**`struct ibv_recv_wr`** ([verbs.h:1233-1238](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L1233-L1238)):
+**`struct ibv_recv_wr`** ([verbs.h:1233-1238](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h)):
 
 ```c
 struct ibv_recv_wr wr = {
@@ -464,7 +470,7 @@ struct ibv_recv_wr wr = {
 ibv_post_recv(qp, &wr, &bad_wr);
 ```
 
-**`struct ibv_wc`** ([verbs.h:592-612](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L592-L612)):
+**`struct ibv_wc`** ([verbs.h:592-612](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h)):
 
 ```c
 // Poll completion queue
@@ -492,7 +498,9 @@ if (n > 0) {
 
 ### FI_EP_RDM Endpoint
 
-Libfabric EFA provider maps SRD to `FI_EP_RDM` (Reliable Datagram Message) endpoint type:
+Libfabric EFA provider maps SRD to `FI_EP_RDM` (Reliable Datagram Message) endpoint type.
+(Version baseline for this document: libfabric **2.7.0rc1** `main`, rdma-core **65.0-dev**
+`master` with **v64.0** the latest release, EFA kernel driver **r3.3.0**.)
 
 ```c
 struct fi_info *hints = fi_allocinfo();
@@ -632,7 +640,7 @@ NCCL → OFI Plugin → Libfabric → EFA Provider → SRD QPs
 | **Congestion Control** | Hardware-based, sub-millisecond response |
 | **Implementation** | Nitro networking card (hardware offload) |
 | **Latency** | ~12-15 μs small messages (intra-AZ), 85% better P99.9 vs TCP |
-| **Throughput** | 25 Gbps per flow, 400 Gbps per GPU (multi-rail) |
+| **Throughput** | 25 Gbps per flow; per-EFA link 100 Gbps (older) up to 800/1600 Gbps (newer, r3.3.0); aggregated per GPU via multi-rail |
 | **Message Rate** | ~10-15 Mpps small messages |
 | **Ordering** | Out-of-order delivery (prevents head-of-line blocking) |
 | **Reliability** | Guaranteed delivery, automatic retransmission |
@@ -666,15 +674,15 @@ NCCL → OFI Plugin → Libfabric → EFA Provider → SRD QPs
 ### Structures
 
 **amzn-drivers (EFA Kernel Driver)**:
-- `struct ib_srd_wr` ([efa_verbs.h:13-18](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L13-L18))
-- `struct ib_srd_rdma_wr` ([efa_verbs.h:20-24](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L20-L24))
+- `struct ib_srd_wr` ([efa_verbs.h:13-18](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h))
+- `struct ib_srd_rdma_wr` ([efa_verbs.h:20-24](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h))
 
 **rdma-core (libibverbs)**:
-- `struct ibv_qp_init_attr` ([verbs.h:945-953](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L945-L953))
-- `struct ibv_ah_attr` ([verbs.h:788-796](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L788-L796))
-- `struct ibv_sge` ([verbs.h:1172-1176](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L1172-L1176))
-- `struct ibv_recv_wr` ([verbs.h:1233-1238](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L1233-L1238))
-- `struct ibv_wc` ([verbs.h:592-612](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L592-L612))
+- `struct ibv_qp_init_attr` ([verbs.h:945-953](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h))
+- `struct ibv_ah_attr` ([verbs.h:788-796](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h))
+- `struct ibv_sge` ([verbs.h:1172-1176](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h))
+- `struct ibv_recv_wr` ([verbs.h:1233-1238](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h))
+- `struct ibv_wc` ([verbs.h:592-612](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h))
 
 ### Functions
 
@@ -694,8 +702,8 @@ NCCL → OFI Plugin → Libfabric → EFA Provider → SRD QPs
 ### Constants/Defines
 
 **amzn-drivers (EFA Kernel Driver)**:
-- `EFA_QPT_SRD` ([efa_verbs.h:36](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L36))
-- `EFA_IO_SEND`, `EFA_IO_RDMA_READ`, `EFA_IO_RDMA_WRITE` (referenced from [efa_io_defs.h](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h))
+- `EFA_QPT_SRD` ([efa_verbs.h:36](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h))
+- `EFA_IO_SEND`, `EFA_IO_RDMA_READ`, `EFA_IO_RDMA_WRITE` (referenced from [efa_io_defs.h](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
 
 ### Total Code References
 - **2 structures** from amzn-drivers
@@ -704,5 +712,6 @@ NCCL → OFI Plugin → Libfabric → EFA Provider → SRD QPs
 - **4 libfabric functions** (standard API, not directly linked)
 - **1+ constants** from amzn-drivers
 
-All amzn-drivers references link to commit `8a8b6f2` in the [amzn/amzn-drivers](https://github.com/amzn/amzn-drivers) repository.
-All rdma-core references link to commit `6e9643e` in the [linux-rdma/rdma-core](https://github.com/linux-rdma/rdma-core) repository.
+All amzn-drivers references link to the `master` branch of the [amzn/amzn-drivers](https://github.com/amzn/amzn-drivers) repository (EFA kernel driver **r3.3.0**).
+All rdma-core references link to the `master` branch of the [linux-rdma/rdma-core](https://github.com/linux-rdma/rdma-core) repository (**65.0-dev**, latest release v64.0).
+Line numbers are given in the link text since branch URLs are not pinned.

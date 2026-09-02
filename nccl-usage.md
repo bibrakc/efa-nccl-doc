@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document provides a comprehensive guide to NCCL usage patterns, focusing on communicators as the fundamental abstraction for collective communication. We explore why communicators exist, how they're used, when to split or combine them, and how proxy threads enable parallel network operations. All concepts are backed by extensive source code references from NCCL 2.29.2-1.
+This document provides a comprehensive guide to NCCL usage patterns, focusing on communicators as the fundamental abstraction for collective communication. We explore why communicators exist, how they're used, when to split or combine them, and how proxy threads enable parallel network operations. Concepts are backed by extensive source code references; the communicator/enqueue/proxy structures and APIs described here were re-checked against NCCL v2.31.2-1 (the communicator, group, split/shrink and proxy interfaces below are unchanged in 2.31 unless noted).
 
 ## Table of Contents
 
@@ -25,7 +25,7 @@ A communicator (`ncclComm_t`) is NCCL's core abstraction representing a group of
 - Resources allocated for communication
 - The logical arrangement (rings, trees) for algorithms
 
-**Source:** [nccl/src/include/comm.h:504-752](https://github.com/NVIDIA/nccl/blob/master/src/include/comm.h#L504)
+**Source:** [nccl/src/include/comm.h:504-752](https://github.com/NVIDIA/nccl/blob/master/src/include/comm.h)
 ```c
 struct ncclComm {
   uint64_t startMagic;
@@ -82,7 +82,7 @@ model_parallel_comms = [
 
 Each communicator maintains its own resources:
 
-**Source:** [nccl/src/init.cc:431-458](https://github.com/NVIDIA/nccl/blob/master/src/init.cc#L431)
+**Source:** [nccl/src/init.cc:431-458](https://github.com/NVIDIA/nccl/blob/master/src/init.cc)
 ```c
 if (parent == NULL || !parent->shareResources) {
   struct ncclSharedResources* sharedRes;
@@ -104,7 +104,7 @@ if (parent == NULL || !parent->shareResources) {
 
 Communicators enable topology-aware communication patterns:
 
-**Source:** [nccl/src/graph/topo.cc:420-485](https://github.com/NVIDIA/nccl/blob/master/src/graph/topo.cc#L420)
+**Source:** [nccl/src/graph/topo.cc:420-485](https://github.com/NVIDIA/nccl/blob/master/src/graph/topo.cc)
 ```c
 ncclResult_t ncclTopoCompute(ncclTopoSystem* system, struct ncclComm* comm) {
   // Build optimal rings based on topology
@@ -127,7 +127,7 @@ NCCL provides three primary methods for creating communicators:
 
 ### Method 1: ncclCommInitAll - Single Process, Multiple GPUs
 
-**Source:** [nccl/src/nccl.h.in:187](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in#L187)
+**Source:** [nccl/src/nccl.h.in:187](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in)
 ```c
 /* Creates a clique of communicators (single process version) */
 ncclResult_t ncclCommInitAll(ncclComm_t* comm, int ndev, const int* devlist);
@@ -151,14 +151,14 @@ for (int i = 0; i < 8; i++) {
 
 ### Method 2: ncclCommInitRank - Multi-Process/Thread
 
-**Source:** [nccl/src/nccl.h.in:178](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in#L178)
+**Source:** [nccl/src/nccl.h.in:178](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in)
 ```c
 /* Creates a new communicator (multi thread/process version) */
 ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks,
                               ncclUniqueId commId, int rank);
 ```
 
-**Implementation:** [nccl/src/init.cc:1657-1742](https://github.com/NVIDIA/nccl/blob/master/src/init.cc#L1657)
+**Implementation:** [nccl/src/init.cc:1657-1742](https://github.com/NVIDIA/nccl/blob/master/src/init.cc)
 ```c
 NCCL_API(ncclResult_t, ncclCommInitRank, ncclComm_t* comm, int nranks,
          ncclUniqueId commId, int rank) {
@@ -186,7 +186,7 @@ NCCL_API(ncclResult_t, ncclCommInitRank, ncclComm_t* comm, int nranks,
 
 ### Method 3: ncclCommSplit - Creating Sub-communicators
 
-**Source:** [nccl/src/nccl.h.in:223](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in#L223)
+**Source:** [nccl/src/nccl.h.in:223](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in)
 ```c
 /* Creates one or more communicators from an existing one */
 ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int key,
@@ -199,7 +199,7 @@ All NCCL collective operations require a communicator parameter:
 
 ### Collective Operations
 
-**Source:** [nccl/src/nccl.h.in:564-638](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in#L564)
+**Source:** [nccl/src/nccl.h.in:564-638](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in)
 
 ```c
 // AllReduce - combine values from all ranks
@@ -225,7 +225,7 @@ ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, size_t recv
 
 ### How Operations Use the Communicator
 
-**Source:** [nccl/src/enqueue.cc:845-962](https://github.com/NVIDIA/nccl/blob/master/src/enqueue.cc#L845)
+**Source:** [nccl/src/enqueue/enqueue.cc:845-962](https://github.com/NVIDIA/nccl/blob/master/src/enqueue/enqueue.cc)
 ```c
 ncclResult_t ncclEnqueueCheck(struct ncclInfo* info) {
   ncclComm_t comm = info->comm;
@@ -283,7 +283,7 @@ ncclBroadcast(params, params, param_size, ncclFloat32,
 
 ### Group Operations - Avoiding Deadlocks
 
-**Source:** [nccl/src/nccl.h.in:640-660](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in#L640)
+**Source:** [nccl/src/nccl.h.in:640-660](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in)
 ```c
 /* Group semantics
  * When managing multiple GPUs from a single thread, and since NCCL collective
@@ -294,7 +294,7 @@ ncclResult_t ncclGroupStart();
 ncclResult_t ncclGroupEnd();
 ```
 
-**Implementation:** [nccl/src/group.cc:76-158](https://github.com/NVIDIA/nccl/blob/master/src/group.cc#L76)
+**Implementation:** [nccl/src/group.cc:76-158](https://github.com/NVIDIA/nccl/blob/master/src/group.cc)
 ```c
 // Start grouping - operations won't execute immediately
 NCCL_API(ncclResult_t, ncclGroupStart) {
@@ -338,7 +338,7 @@ Splitting enables hierarchical communication patterns essential for modern distr
 
 **1. Data Parallelism + Model Parallelism**
 
-**Source:** [nccl/src/init.cc:2145-2286](https://github.com/NVIDIA/nccl/blob/master/src/init.cc#L2145)
+**Source:** [nccl/src/init.cc:2145-2286](https://github.com/NVIDIA/nccl/blob/master/src/init.cc)
 ```c
 NCCL_API(ncclResult_t, ncclCommSplit, ncclComm_t comm, int color, int key,
          ncclComm_t *newcomm, ncclConfig_t* config) {
@@ -400,7 +400,7 @@ def create_process_groups(world_size, rank):
 
 ### Growing and Shrinking Communicators
 
-**Source:** [nccl/src/nccl.h.in:231-249](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in#L231)
+**Source:** [nccl/src/nccl.h.in:231-249](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in)
 
 ```c
 /* Grow communicator by adding new ranks */
@@ -439,7 +439,7 @@ if (gpu_failure_detected) {
 
 Proxy threads are NCCL's mechanism for handling network I/O independently from CUDA kernels:
 
-**Source:** [nccl/src/proxy.cc:452-567](https://github.com/NVIDIA/nccl/blob/master/src/proxy.cc#L452)
+**Source:** [nccl/src/proxy.cc:452-567](https://github.com/NVIDIA/nccl/blob/master/src/proxy.cc)
 ```c
 void* ncclProxyService(void* _args) {
   struct ncclProxyState* state = (struct ncclProxyState*) _args;
@@ -488,7 +488,7 @@ void* ncclProxyService(void* _args) {
 
 ### Why Multiple Proxy Threads?
 
-**Source:** [nccl/src/init.cc:1456-1478](https://github.com/NVIDIA/nccl/blob/master/src/init.cc#L1456)
+**Source:** [nccl/src/init.cc:1456-1478](https://github.com/NVIDIA/nccl/blob/master/src/init.cc)
 
 ```c
 static ncclResult_t ncclCommSetup(ncclComm_t comm) {
@@ -553,7 +553,7 @@ Benefits: Reduced memory latency, better cache utilization
 
 ### Proxy Thread Synchronization
 
-**Source:** [nccl/src/proxy.cc:623-689](https://github.com/NVIDIA/nccl/blob/master/src/proxy.cc#L623)
+**Source:** [nccl/src/proxy.cc:623-689](https://github.com/NVIDIA/nccl/blob/master/src/proxy.cc)
 ```c
 // Coordination between GPU kernels and proxy threads
 struct ncclProxyOp {
@@ -597,7 +597,7 @@ void processProxyOp(ncclProxyOp* op) {
 
 ### Shared Resources Structure
 
-**Source:** [nccl/src/include/comm.h:109-137](https://github.com/NVIDIA/nccl/blob/master/src/include/comm.h#L109)
+**Source:** [nccl/src/include/comm.h:109-137](https://github.com/NVIDIA/nccl/blob/master/src/include/comm.h)
 ```c
 struct ncclSharedResources {
   int refCount;
@@ -608,7 +608,7 @@ struct ncclSharedResources {
   struct ncclDevChannelPeer* devPeers[MAXCHANNELS];
 
   // Shared network resources
-  void* netComm[MAXCHANNELS][NCCL_MAX_PEERS];
+  uint64_t p2pOpCount[MAXCHANNELS];   // P2P op counter, one per channel
 
   // Shared memory regions
   struct ncclMemoryRegion* sendMem[MAXCHANNELS];
@@ -622,7 +622,7 @@ struct ncclSharedResources {
 
 ### When Resources Are Shared
 
-**Source:** [nccl/src/init.cc:2198-2215](https://github.com/NVIDIA/nccl/blob/master/src/init.cc#L2198)
+**Source:** [nccl/src/init.cc:2198-2215](https://github.com/NVIDIA/nccl/blob/master/src/init.cc)
 ```c
 // During split with splitShare=1
 if (config && config->splitShare) {
@@ -640,7 +640,7 @@ if (config && config->splitShare) {
 
 ### Resource Cleanup
 
-**Source:** [nccl/src/init.cc:2341-2367](https://github.com/NVIDIA/nccl/blob/master/src/init.cc#L2341)
+**Source:** [nccl/src/init.cc:2341-2367](https://github.com/NVIDIA/nccl/blob/master/src/init.cc)
 ```c
 static ncclResult_t ncclCommDestroy(ncclComm_t comm) {
   // Decrement reference count
@@ -683,7 +683,7 @@ ncclComm_t pipeline_comm;          // For pipeline stages
 
 ### Channel Configuration Per Communicator
 
-**Source:** [nccl/src/init.cc:876-945](https://github.com/NVIDIA/nccl/blob/master/src/init.cc#L876)
+**Source:** [nccl/src/init.cc:876-945](https://github.com/NVIDIA/nccl/blob/master/src/init.cc)
 ```c
 static ncclResult_t ncclCommInitChannel(ncclComm_t comm) {
   // Determine optimal channel count based on:
@@ -816,20 +816,21 @@ void overlapCommPatterns(ncclComm_t comm1, ncclComm_t comm2) {
 
 ## Environment Variables for Communicator Tuning
 
-**Source:** [nccl/src/env.cc](https://github.com/NVIDIA/nccl/blob/master/src/env.cc)
+**Source:** [nccl/src/plugin/env.cc](https://github.com/NVIDIA/nccl/blob/master/src/plugin/env.cc)
 
 ```bash
 # Channel configuration per communicator
 export NCCL_MIN_NCHANNELS=8     # Minimum channels
 export NCCL_MAX_NCHANNELS=16    # Maximum channels
 
-# Proxy thread configuration
-export NCCL_PROXY_THREADS=4     # Threads per communicator
-export NCCL_CPU_AFFINITY=0-15   # CPU cores for proxy threads
+# Proxy threads: NCCL has no NCCL_PROXY_THREADS or NCCL_CPU_AFFINITY variable.
+# Thread count is derived internally; CPU placement comes from the launcher.
+export NCCL_PROXY_APPEND_BATCH_SIZE=16   # src/proxy.cc, default 16
+export NCCL_IGNORE_CPU_AFFINITY=0        # whether to honor the inherited mask
 
-# Resource sharing
-export NCCL_COMM_SPLIT_SHARE=1  # Share resources on split
-export NCCL_COMM_SHRINK_SHARE=1 # Share resources on shrink
+# Resource sharing (src/init.cc:1875-1876 -- note the _RESOURCES suffix)
+export NCCL_COMM_SPLIT_SHARE_RESOURCES=1   # Share resources on ncclCommSplit
+export NCCL_COMM_SHRINK_SHARE_RESOURCES=1  # Share resources on ncclCommShrink
 
 # Performance tuning
 export NCCL_BUFFSIZE=4194304    # 4MB buffer per channel

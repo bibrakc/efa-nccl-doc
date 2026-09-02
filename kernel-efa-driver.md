@@ -4,9 +4,12 @@
 
 The **EFA kernel driver** is a Linux kernel module that provides the interface between userspace RDMA applications and the EFA hardware. It implements the kernel-side of the RDMA verbs API and manages hardware resources.
 
-**GitHub**: [kernel/linux/efa/](https://github.com/amzn/amzn-drivers/tree/8a8b6f2/kernel/linux/efa)
+**GitHub**: [kernel/linux/efa/](https://github.com/amzn/amzn-drivers/tree/master/kernel/linux/efa)
 
-**Driver Version**: 3.0.0 (as of this documentation)
+**Driver Version**: **r3.3.0** (`DRV_MODULE_VER_MAJOR/MINOR/SUBMINOR = 3/3/0` in
+[efa_main.c](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_main.c) lines ~42-44;
+authoritative change list in
+[RELEASENOTES.md](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/RELEASENOTES.md)).
 
 ### Firmware and Hardware Boundary (what is open vs closed)
 
@@ -29,6 +32,62 @@ Practical consequence: behaviors like the **Gen 1–3 DMA-BUF page-merging issue
 firmware characteristics observable from the driver, not bugs fixable in the open driver
 source. When debugging, the open code tells you *what was requested of the device*; the
 device's internal handling is inferred from completions, counters, and errors.
+
+## What's New in EFA Driver r3.3.0
+
+The r3.3.0 release (change list in
+[RELEASENOTES.md](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/RELEASENOTES.md))
+adds several capabilities directly relevant to high-performance and GPU-initiated
+networking. All items below are verified in
+[kernel/linux/efa/src/](https://github.com/amzn/amzn-drivers/tree/master/kernel/linux/efa/src):
+
+- **Completion Counters (hardware event counters).** New admin opcodes
+  `EFA_ADMIN_CREATE_EVENT_COUNTER` (25), `DESTROY_EVENT_COUNTER` (26),
+  `ATTACH_EVENT_COUNTER` (27), `MODIFY_EVENT_COUNTER` (28) and
+  `DETACH_EVENT_COUNTER` (29) — opcodes 25-29, the new
+  `EFA_ADMIN_MAX_OPCODE`, in
+  [efa_admin_cmds_defs.h](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_admin_cmds_defs.h))
+  and `efa_com_create_event_counter()` in
+  [efa_com_cmd.c](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_com_cmd.c).
+  Device attributes now report `max_event_counters`, `event_counter_max_val` and
+  `supported_event_counter_qp_events` (QUEUE_ATTR_2). **GDAKI / GPU-initiated data
+  paths use these hardware completion counters** to observe completions without a
+  host CPU polling loop.
+- **64-bit work request IDs for QP/SQ creation.** The device advertises
+  `EFA_QUERY_DEVICE_CAPS_SQ_64_BIT_REQ_ID`, exposed to userspace as
+  `EFADV_WQ_CAPS_64_BIT_REQ_ID`. When enabled, the full 64-bit `wr_id` is carried
+  in the WQE (`req_id` + `req_id_ex`) and returned in the completion, removing the
+  need for a wrid-index translation pool. (Consumed by libfabric Data Path Direct —
+  see [rdma-core-and-verbs.md](rdma-core-and-verbs.md).)
+- **128-byte send-queue WQEs.** `efa_calc_sq_wqe_size_kernel()` in
+  [efa_verbs.c](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.c)
+  can return `EFA_IO_TX_DESC_SIZE_128`; gated by `EFA_QUERY_DEVICE_CAPS_DATA_POLLING_128`.
+  Wider WQEs enlarge inline capacity (32 → 80 bytes) and enable inline RDMA WRITE.
+- **Inline WRITE operation support.** `sq->inline_write_enabled` is set when
+  `sq->wqe_size > EFA_IO_TX_DESC_SIZE_64` (efa_verbs.c).
+- **New 0xefa4 PCI device ID** (`PCI_DEV_ID_EFA4_VF`, see PCI device table below).
+- **800 and 1600 Gbps link speeds.** `efa_link_gbps_to_speed_and_width()`
+  (efa_verbs.c lines ~417-439) maps ≥1600 Gbps → `IB_SPEED_XDR`, ≥800 → `IB_SPEED_NDR`.
+  A new **query-port-speed verb** `efa_query_port_speed()` (efa_verbs.c line ~487)
+  reports the raw link speed (`max_link_speed_gbps * 10`, in units of 100 Mbps).
+- **Checksum validation on admin responses.** `efa_com_calc_crc16_checksum()`
+  (CRC16 over the admin SQ/CQ entry) and `efa_com_cqe_checksum_valid()` in
+  [efa_com.c](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_com.c);
+  enabled (`cq->validate_checksum = true`) when the device API version is at least
+  `EFA_CRC_MIN_API_VERSION`.
+- **>4 GB MR page size.** MR registration now carries an extended page-shift field,
+  allowing page sizes larger than 4 GB for large physically-contiguous regions.
+- **AH device-object reuse via an rhashtable AH cache.** New
+  [efa_ah_cache.c](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_ah_cache.c)
+  / `.h`: identical destination addresses share one hardware AH object, reducing AH
+  table pressure and create/destroy admin traffic.
+- **Admin queue v2 / generalized admin SQ.** 128-byte admin v2 SQ entry, a
+  generalized admin SQ, and the admin command payload decoupled from the admin
+  header (efa_com.c / efa_admin_cmds_defs.h).
+- **Core-utility backports.** `umem` pinning from buffer-descriptor attributes,
+  `ib_umem_get_cq_buf` for CQ buffer pinning, and the `ib_umem_get` →
+  `ib_umem_get_va` rename; PBL chunk-length computation fix during MR registration;
+  alignment to mainline 7.2 kernel changes.
 
 ## Architecture Position
 
@@ -68,12 +127,13 @@ device's internal handling is inferred from completions, counters, and errors.
 **PCI Device Table** - Supported EFA Generations:
 
 ```c
-// From efa_main.c:32
+// From efa_main.c (lines ~27-38)
 static const struct pci_device_id efa_pci_tbl[] = {
     { PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA0_VF) },  // Gen 1: 0xefa0
     { PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA1_VF) },  // Gen 2: 0xefa1
     { PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA2_VF) },  // Gen 3: 0xefa2
     { PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA3_VF) },  // Gen 4: 0xefa3
+    { PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA4_VF) },  // 0xefa4 (new in r3.3.0)
     { }
 };
 ```
@@ -208,7 +268,7 @@ int efa_alloc_pd(struct ib_pd *ibpd, struct ib_udata *udata)
 // Standard memory registration (CPU memory)
 struct ib_mr *efa_reg_mr(struct ib_pd *ibpd, u64 start, u64 length,
                          u64 virt_addr, int access_flags,
-                         struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:2799](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.c#L2799))
+                         struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:2799](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.c))
 {
     struct efa_dev *dev = to_edev(ibpd->device);
     struct efa_mr *mr;
@@ -283,7 +343,7 @@ struct ib_mr *efa_reg_user_mr_dmabuf(struct ib_pd *ibpd, u64 start, u64 length,
 #endif
 
 // Memory deregistration
-int efa_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:3065](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.c#L3065))
+int efa_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:3065](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.c))
 {
     struct efa_dev *dev = to_edev(ibmr->device);
     struct efa_mr *mr = to_emr(ibmr);
@@ -317,7 +377,7 @@ int efa_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)  // ([kernel/linux/
 
 ```c
 int efa_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *init_attr,
-                  struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:1216](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.c#L1216))
+                  struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:1216](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.c))
 {
     struct efa_dev *dev = to_edev(ibqp->pd->device);
     struct efa_qp *qp = to_eqp(ibqp);
@@ -330,7 +390,7 @@ int efa_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *init_attr,
     err = ib_copy_from_udata(&cmd, udata, sizeof(cmd));
 
     // 2. Create queue pair in hardware
-    params.qp_type = init_attr->qp_type;  // UD (unreliable datagram)
+    params.qp_type = init_attr->qp_type;  // EFA_ADMIN_QP_TYPE_SRD (or UD)
     params.send_cq_idx = to_ecq(init_attr->send_cq)->cq_idx;
     params.recv_cq_idx = to_ecq(init_attr->recv_cq)->cq_idx;
     params.sq_depth = init_attr->cap.max_send_wr;
@@ -363,7 +423,7 @@ int efa_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *init_attr,
 
 ```c
 int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
-                  struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:2147](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.c#L2147))
+                  struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:2147](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.c))
 {
     struct efa_dev *dev = to_edev(ibcq->device);
     struct efa_cq *cq = to_ecq(ibcq);
@@ -410,7 +470,7 @@ pinned and translated to DMA addresses, with one pluggable provider per accelera
 family.
 
 **Provider model** — each provider implements a small ops vtable
-([`struct efa_p2p_ops`](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_p2p.h)):
+([`struct efa_p2p_ops`](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_p2p.h)):
 
 ```c
 struct efa_p2p_ops {
@@ -654,7 +714,7 @@ static int efa_com_admin_q_comp_intr_handler(struct efa_com_admin_queue *aq)
 
 ```c
 // Main device structure
-struct efa_dev {  // ([kernel/linux/efa/src/efa.h:53-79](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa.h#L53-L79))
+struct efa_dev {  // ([kernel/linux/efa/src/efa.h:53-79](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa.h))
     struct ib_device ibdev;               // RDMA core device
     struct pci_dev *pdev;                 // PCI device
     struct efa_com_dev edev;              // Admin queue/command interface
@@ -676,7 +736,7 @@ struct efa_dev {  // ([kernel/linux/efa/src/efa.h:53-79](https://github.com/amzn
 };
 
 // Queue Pair
-struct efa_qp {  // ([kernel/linux/efa/src/efa.h:240-263](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa.h#L240-L263))
+struct efa_qp {  // ([kernel/linux/efa/src/efa.h:240-263](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa.h))
     struct ib_qp ibqp;
     u32 qp_handle;
     u32 qp_num;
@@ -686,7 +746,7 @@ struct efa_qp {  // ([kernel/linux/efa/src/efa.h:240-263](https://github.com/amz
 };
 
 // Completion Queue
-struct efa_cq {  // ([kernel/linux/efa/src/efa.h:171-188](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa.h#L171-L188))
+struct efa_cq {  // ([kernel/linux/efa/src/efa.h:171-188](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa.h))
     struct ib_cq ibcq;
     u16 cq_idx;
     u32 cq_handle;
@@ -694,7 +754,7 @@ struct efa_cq {  // ([kernel/linux/efa/src/efa.h:171-188](https://github.com/amz
 };
 
 // Memory Region
-struct efa_mr {  // ([kernel/linux/efa/src/efa.h:149-157](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa.h#L149-L157))
+struct efa_mr {  // ([kernel/linux/efa/src/efa.h:149-157](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa.h))
     struct ib_mr ibmr;
     struct ib_umem *umem;                 // Pinned user pages
     struct efa_mr_pbl pbl;                // Page buffer list
@@ -822,6 +882,7 @@ efa_io_defs.h (10KB)      - Hardware I/O definitions
 efa_admin_cmds_defs.h (27KB) - Admin command structures
 efa_p2p.c (3KB)           - Peer-to-peer (GPUDirect)
 efa_neuronmem.c (4KB)     - AWS Neuron memory support
+efa_ah_cache.c            - rhashtable AH cache (r3.3.0, AH device-object reuse)
 efa_sysfs.c (1KB)         - Sysfs attributes
 ```
 
@@ -844,6 +905,10 @@ efa_sysfs.c (1KB)         - Sysfs attributes
 5. Supports **DMA-BUF** for GPU memory (kernel 5.12+, EFA Gen 4+)
 6. Memory registration is **expensive** (100-500 μs) - userspace must cache!
 7. After setup, posting sends/recvs is just **memory writes** + **doorbell ring**
+8. **r3.3.0** adds hardware **completion counters** (for GDAKI/GPU-initiated paths),
+   64-bit work request IDs, 128-byte WQEs + inline WRITE, the 0xefa4 device ID,
+   800/1600 Gbps link speeds with a query-port-speed verb, admin-response checksum
+   validation, >4 GB MR page sizes, and an rhashtable AH cache.
 
 **Related Documentation**:
 - [rdma-core-and-verbs.md](rdma-core-and-verbs.md) - Userspace library that talks to this driver

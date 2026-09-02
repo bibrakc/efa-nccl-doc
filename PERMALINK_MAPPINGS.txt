@@ -1,71 +1,123 @@
-# GitHub Permalink Mappings for NCCL/EFA Documentation
+# GitHub Source-Link Mappings for NCCL/EFA Documentation
 # Format: name|repo|file_path|line_range
-# This file maps struct and function names to their source code locations
+#
+# This file maps struct, class, and function names to their source code locations.
+# Line ranges were verified against the source snapshot recorded at the bottom of
+# this file on 2026-09-01. Line numbers drift; the file path is the durable part.
+#
+# LINK POLICY (see also PERMALINK_STATUS.md):
+#   - Documentation links use BRANCH-form base URLs (blob/master, blob/main), never
+#     commit-pinned SHAs, so that a reader always lands on current code.
+#   - Documentation links do NOT use #L line anchors (they rot silently and point at
+#     unrelated code after a refactor). Line numbers belong in the LINK TEXT instead:
+#       [include/nccl_ofi_mr.h:201-256](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_mr.h)
+#   - The snapshot commits below let a reader reconstruct exact permalinks when needed.
 
-# === AWS-OFI-NCCL Structs ===
-nccl_ofi_freelist_elem_t|aws-ofi-nccl|include/nccl_ofi_freelist.h|19-23
-nccl_ofi_freelist_block_t|aws-ofi-nccl|include/nccl_ofi_freelist.h|28-35
-nccl_ofi_freelist_t|aws-ofi-nccl|include/nccl_ofi_freelist.h|88-109
-nccl_ofi_reg_entry_t|aws-ofi-nccl|include/nccl_ofi_mr.h|186-192
-nccl_ofi_mr_cache_t|aws-ofi-nccl|include/nccl_ofi_mr.h|197-205
-nccl_ofi_mr_ckey|aws-ofi-nccl|include/nccl_ofi_mr.h|35-44
-nccl_ofi_mr_ckey_t|aws-ofi-nccl|include/nccl_ofi_mr.h|35-46
+# === AWS-OFI-NCCL: freelist allocator ===
+# NOTE: converted from a C struct + free functions to a C++ class. The old
+# nccl_ofi_freelist_init()/_init_mr()/_entry_alloc()/_entry_free() free functions
+# no longer exist; they are constructors and member functions now.
+nccl_ofi_freelist (class)|aws-ofi-nccl|include/nccl_ofi_freelist.h|22-320
+nccl_ofi_freelist::fl_entry|aws-ofi-nccl|include/nccl_ofi_freelist.h|27-31
+nccl_ofi_freelist::nccl_ofi_freelist (plain ctor)|aws-ofi-nccl|include/nccl_ofi_freelist.h|109
+nccl_ofi_freelist::nccl_ofi_freelist (registered-MR ctor)|aws-ofi-nccl|include/nccl_ofi_freelist.h|125
+nccl_ofi_freelist::~nccl_ofi_freelist|aws-ofi-nccl|include/nccl_ofi_freelist.h|146
+nccl_ofi_freelist::entry_alloc|aws-ofi-nccl|include/nccl_ofi_freelist.h|163
+nccl_ofi_freelist::entry_free|aws-ofi-nccl|include/nccl_ofi_freelist.h|203
+nccl_ofi_freelist::add|aws-ofi-nccl|include/nccl_ofi_freelist.h|245
+nccl_ofi_freelist_block_t|aws-ofi-nccl|include/nccl_ofi_freelist.h|289-292
+nccl_ofi_freelist::init_internal|aws-ofi-nccl|src/nccl_ofi_freelist.cpp|19
+nccl_ofi_freelist::add (definition)|aws-ofi-nccl|src/nccl_ofi_freelist.cpp|205
 
-# === AWS-OFI-NCCL Functions ===
-nccl_ofi_freelist_init|aws-ofi-nccl|src/nccl_ofi_freelist.cpp|131
-nccl_ofi_freelist_init_mr|aws-ofi-nccl|src/nccl_ofi_freelist.cpp|188
-nccl_ofi_freelist_entry_alloc|aws-ofi-nccl|src/nccl_ofi_freelist.cpp|270
-nccl_ofi_freelist_entry_free|aws-ofi-nccl|src/nccl_ofi_freelist.cpp|318
-nccl_ofi_mr_cache_init|aws-ofi-nccl|src/nccl_ofi_mr.cpp|13
-nccl_ofi_mr_cache_lookup_entry|aws-ofi-nccl|src/nccl_ofi_mr.cpp|112
-nccl_ofi_mr_cache_insert_entry|aws-ofi-nccl|src/nccl_ofi_mr.cpp|153
-nccl_ofi_mr_cache_del_entry|aws-ofi-nccl|src/nccl_ofi_mr.cpp|223
+# === AWS-OFI-NCCL: memory-registration cache ===
+# NOTE: also converted to a C++ class; the nccl_ofi_mr_cache_*() free functions are gone.
+nccl_ofi_mr_ckey|aws-ofi-nccl|include/nccl_ofi_mr.h|35-45
+nccl_ofi_mr_ckey_t|aws-ofi-nccl|include/nccl_ofi_mr.h|46
+nccl_ofi_mr_ckey_ref|aws-ofi-nccl|include/nccl_ofi_mr.h|47
+nccl_ofi_mr_ckey_fill_mr_attrs|aws-ofi-nccl|include/nccl_ofi_mr.h|160
+nccl_ofi_reg_entry|aws-ofi-nccl|include/nccl_ofi_mr.h|186-195
+nccl_ofi_reg_entry_t|aws-ofi-nccl|include/nccl_ofi_mr.h|196
+nccl_ofi_mr_cache (class)|aws-ofi-nccl|include/nccl_ofi_mr.h|201-256
+nccl_ofi_mr_cache::nccl_ofi_mr_cache|aws-ofi-nccl|include/nccl_ofi_mr.h|211
+nccl_ofi_mr_cache::~nccl_ofi_mr_cache|aws-ofi-nccl|include/nccl_ofi_mr.h|216
+nccl_ofi_mr_cache::lookup_entry|aws-ofi-nccl|include/nccl_ofi_mr.h|229
+nccl_ofi_mr_cache::insert_entry|aws-ofi-nccl|include/nccl_ofi_mr.h|239
+nccl_ofi_mr_cache::del_entry|aws-ofi-nccl|include/nccl_ofi_mr.h|251
+nccl_ofi_mr_cache::nccl_ofi_mr_cache (definition)|aws-ofi-nccl|src/nccl_ofi_mr.cpp|13
+nccl_ofi_mr_cache::~nccl_ofi_mr_cache (definition)|aws-ofi-nccl|src/nccl_ofi_mr.cpp|34
+nccl_ofi_mr_cache::compute_page_address|aws-ofi-nccl|src/nccl_ofi_mr.cpp|52
+nccl_ofi_mr_cache::lookup_entry (definition)|aws-ofi-nccl|src/nccl_ofi_mr.cpp|61
+nccl_ofi_mr_cache::insert_entry (definition)|aws-ofi-nccl|src/nccl_ofi_mr.cpp|100
+nccl_ofi_mr_cache::del_entry (definition)|aws-ofi-nccl|src/nccl_ofi_mr.cpp|150
 
 # === Libfabric Structs ===
-fid_mr|libfabric|include/rdma/fi_domain.h|131-138
-fi_cq_data_entry|libfabric|include/rdma/fi_eq.h|215-220
-fi_cq_err_entry|libfabric|include/rdma/fi_eq.h|233-246
-fi_info|libfabric|include/rdma/fabric.h|198-232
-fid_ep|libfabric|include/rdma/fabric.h|168-178
-fid_domain|libfabric|include/rdma/fi_domain.h|94-104
-fid_cq|libfabric|include/rdma/fi_eq.h|138-148
-fid_av|libfabric|include/rdma/fi_cm.h|167-177
+fi_info|libfabric|include/rdma/fabric.h|482-498
+fi_domain_attr|libfabric|include/rdma/fabric.h|436-472
+fid_fabric|libfabric|include/rdma/fabric.h|630-634
+fid_domain|libfabric|include/rdma/fi_domain.h|353-357
+fid_av|libfabric|include/rdma/fi_domain.h|117-120
+fid_mr|libfabric|include/rdma/fi_domain.h|134-138
+fid_ep|libfabric|include/rdma/fi_endpoint.h|151-160
+fid_cq|libfabric|include/rdma/fi_eq.h|283-286
+fi_cq_data_entry|libfabric|include/rdma/fi_eq.h|215-222
+fi_cq_err_entry|libfabric|include/rdma/fi_eq.h|233-247
 
 # === Libfabric Functions ===
-fi_tsend|libfabric|include/rdma/fi_tagged.h|121
+# NOTE: include/rdma/fi_msg.h no longer exists. The message-mode calls
+# (fi_send/fi_recv/fi_sendv/fi_recvv/fi_sendmsg/fi_recvmsg/fi_inject/fi_senddata)
+# are static inline wrappers in include/rdma/fi_endpoint.h.
+fi_getinfo|libfabric|include/rdma/fabric.h|603
+fi_fabric|libfabric|include/rdma/fabric.h|638
+fi_close|libfabric|include/rdma/fabric.h|654
+fi_domain|libfabric|include/rdma/fi_domain.h|367
+fi_cq_open|libfabric|include/rdma/fi_domain.h|392
+fi_mr_reg|libfabric|include/rdma/fi_domain.h|420
+fi_mr_regattr|libfabric|include/rdma/fi_domain.h|439
+fi_mr_desc|libfabric|include/rdma/fi_domain.h|445
+fi_av_open|libfabric|include/rdma/fi_domain.h|521
+fi_av_insert|libfabric|include/rdma/fi_domain.h|534
+fi_endpoint|libfabric|include/rdma/fi_endpoint.h|187
+fi_ep_bind|libfabric|include/rdma/fi_endpoint.h|212
+fi_enable|libfabric|include/rdma/fi_endpoint.h|227
+fi_recv|libfabric|include/rdma/fi_endpoint.h|306
+fi_recvv|libfabric|include/rdma/fi_endpoint.h|313
+fi_recvmsg|libfabric|include/rdma/fi_endpoint.h|320
+fi_send|libfabric|include/rdma/fi_endpoint.h|326
+fi_sendv|libfabric|include/rdma/fi_endpoint.h|333
+fi_sendmsg|libfabric|include/rdma/fi_endpoint.h|340
+fi_inject|libfabric|include/rdma/fi_endpoint.h|346
+fi_senddata|libfabric|include/rdma/fi_endpoint.h|352
+fi_cq_read|libfabric|include/rdma/fi_eq.h|404
+fi_cq_readerr|libfabric|include/rdma/fi_eq.h|416
 fi_trecv|libfabric|include/rdma/fi_tagged.h|98
-fi_getinfo|libfabric|include/rdma/fabric.h|315
-fi_endpoint|libfabric|include/rdma/fi_endpoint.h|182
-fi_ep_bind|libfabric|include/rdma/fi_endpoint.h|203
-fi_enable|libfabric|include/rdma/fi_endpoint.h|211
-fi_mr_reg|libfabric|include/rdma/fi_domain.h|413
-fi_mr_regattr|libfabric|include/rdma/fi_domain.h|432
-fi_mr_desc|libfabric|include/rdma/fi_domain.h|147
-fi_cq_read|libfabric|include/rdma/fi_eq.h|311
-fi_cq_readerr|libfabric|include/rdma/fi_eq.h|348
-fi_av_insert|libfabric|include/rdma/fi_cm.h|206
-fi_getname|libfabric|include/rdma/fi_cm.h|154
-fi_send|libfabric|include/rdma/fi_msg.h|104
-fi_recv|libfabric|include/rdma/fi_msg.h|67
-fi_read|libfabric|include/rdma/fi_rma.h|82
-fi_write|libfabric|include/rdma/fi_rma.h|111
-fi_inject|libfabric|include/rdma/fi_msg.h|133
-fi_fabric|libfabric|include/rdma/fabric.h|334
-fi_domain|libfabric|include/rdma/fi_domain.h|409
-fi_cq_open|libfabric|include/rdma/fi_eq.h|363
-fi_av_open|libfabric|include/rdma/fi_cm.h|218
-fi_close|libfabric|include/rdma/fabric.h|150
+fi_tsend|libfabric|include/rdma/fi_tagged.h|121
+fi_read|libfabric|include/rdma/fi_rma.h|98
+fi_write|libfabric|include/rdma/fi_rma.h|119
+fi_atomic|libfabric|include/rdma/fi_atomic.h|150
+fi_getname|libfabric|include/rdma/fi_cm.h|78
 
-# === Commit SHAs ===
-# aws-ofi-nccl: 75240c8
-# libfabric: 6b9e629
-# amzn-drivers: 8a8b6f2
-# rdma-core: 6e9643e
-# linux: e84d960
+# === Libfabric 2.7 XPU API (device-initiated communication) ===
+fi_xpu.h (host-side XPU API)|libfabric|include/rdma/fi_xpu.h|1
+fi_xpu_device.h (device-side XPU API)|libfabric|include/rdma/fi_xpu_device.h|1
 
-# === GitHub Base URLs ===
+# === EFA provider: data path direct (bypasses rdma-core on the data path) ===
+efa_data_path_direct_qp_initialize|libfabric|prov/efa/src/efa_data_path_direct.h|46
+efa_data_path_direct_cq_initialize|libfabric|prov/efa/src/efa_data_path_direct.h|63
+efa_data_path_direct_qp_finalize|libfabric|prov/efa/src/efa_data_path_direct.h|77
+efa_env.use_data_path_direct (default true)|libfabric|prov/efa/src/efa_env.c|41
+
+# === Source Snapshot (verified 2026-09-01) ===
+# aws-ofi-nccl:  d840aa1   (release v1.21.1)          branch: master
+# libfabric:     cb6364e05 (2.7.0rc1)                 branch: main
+# nccl:          fd168324  (release v2.31.2-1)        branch: master
+# rdma-core:     8b3a3e64d (65.0 dev, release v64.0)  branch: master
+# amzn-drivers:  44c91d1   (EFA kernel driver r3.3.0) branch: master
+# linux:         (kernel dma-buf references)          branch: master
+
+# === GitHub Base URLs (branch form - intentionally not commit-pinned) ===
 # aws-ofi-nccl: https://github.com/aws/aws-ofi-nccl/blob/master
-# libfabric: https://github.com/ofiwg/libfabric/blob/6b9e629
-# amzn-drivers: https://github.com/amzn/amzn-drivers/blob/8a8b6f2
-# rdma-core: https://github.com/linux-rdma/rdma-core/blob/6e9643e
-# linux: https://github.com/torvalds/linux/blob/e84d960
+# libfabric:    https://github.com/ofiwg/libfabric/blob/main
+# nccl:         https://github.com/NVIDIA/nccl/blob/master
+# rdma-core:    https://github.com/linux-rdma/rdma-core/blob/master
+# amzn-drivers: https://github.com/amzn/amzn-drivers/blob/master
+# linux:        https://github.com/torvalds/linux/blob/master

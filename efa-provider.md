@@ -4,7 +4,25 @@
 
 The EFA (Elastic Fabric Adapter) provider in libfabric implements support for AWS's custom network adapter. EFA provides high-bandwidth, low-latency networking for EC2 instances.
 
-**Location**: `prov/efa/` in libfabric source
+**Location**: `prov/efa/` in libfabric source (this document reflects libfabric
+**2.7.0rc1**, `main`).
+
+**What changed recently (libfabric 2.3.0 → 2.7.0):**
+- **EFA Data Path Direct** is now the default data path — the provider writes
+  SQ/RQ WQEs and reads CQEs directly instead of calling libibverbs
+  (`FI_EFA_USE_DATA_PATH_DIRECT=true`). Full mechanism in
+  [rdma-core-and-verbs.md](rdma-core-and-verbs.md); the `efa_qp_post_send/recv/read/write`
+  and `efa_ibv_cq_*` wrappers dispatch to it in
+  [prov/efa/src/efa_data_path_ops.h](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_data_path_ops.h).
+- **PEER_ERROR "receiver-decides" model** (new in 2.7) for MR-abort / receiver-side
+  failure signalling — see [MR Abort and the PEER_ERROR packet](#mr-abort-and-the-peer_error-packet).
+- **Extensive provider-internal locking/threading rework** — lock-free peer map
+  and AV array, per-endpoint locks, thread-safety-analysis annotations. See
+  [Provider-internal locking and threading](#provider-internal-locking-and-threading).
+  The supported endpoint threading models are now **FI_THREAD_SAFE**,
+  **FI_THREAD_COMPLETION** and **FI_THREAD_DOMAIN** for both RDM and DGRAM endpoints
+  ([man/fi_efa.7.md](https://github.com/ofiwg/libfabric/blob/main/man/fi_efa.7.md)); the
+  cross-stack threading discussion lives in [threading-model.md](threading-model.md).
 
 ## EFA Hardware Characteristics
 
@@ -161,7 +179,7 @@ caps = FI_MSG           // Message operations
 
 #### EFA Endpoint
 
-**`struct efa_rdm_ep`** - EFA RDM endpoint ([prov/efa/src/rdm/efa_rdm_ep.h:46-120](https://github.com/ofiwg/libfabric/blob/6b9e629/prov/efa/src/rdm/efa_rdm_ep.h#L46-L120)):
+**`struct efa_rdm_ep`** - EFA RDM endpoint ([prov/efa/src/rdm/efa_rdm_ep.h:46-120](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/rdm/efa_rdm_ep.h)):
 
 ```c
 struct efa_rdm_ep {
@@ -193,7 +211,7 @@ struct efa_rdm_ep {
 
 #### Packet Entry
 
-**`struct efa_rdm_pke`** - Packet entry ([prov/efa/src/rdm/efa_rdm_pke.h:78-100](https://github.com/ofiwg/libfabric/blob/6b9e629/prov/efa/src/rdm/efa_rdm_pke.h#L78-L100)):
+**`struct efa_rdm_pke`** - Packet entry ([prov/efa/src/rdm/efa_rdm_pke.h:78-100](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/rdm/efa_rdm_pke.h)):
 
 ```c
 struct efa_rdm_pke {
@@ -492,7 +510,7 @@ ssize_t efa_rdm_read(struct fid_ep *ep,
 
 EFA uses ibverbs for memory registration:
 
-The `struct efa_mr` ([prov/efa/src/efa_mr.h:20-32](https://github.com/ofiwg/libfabric/blob/6b9e629/prov/efa/src/efa_mr.h#L20-L32)) wraps the ibverbs memory region.
+The `struct efa_mr` ([prov/efa/src/efa_mr.h:20-32](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_mr.h)) wraps the ibverbs memory region.
 
 ```c
 int efa_mr_reg(struct fid_domain *domain,
@@ -545,6 +563,95 @@ FI_MR_CACHE_MAX_SIZE=unlimited
 FI_MR_CACHE_MAX_COUNT=unlimited
 ```
 
+## MR Abort and the PEER_ERROR packet
+
+**New in libfabric 2.7.** On an `FI_EP_RDM` `efa` endpoint an application can
+**abort an in-flight transfer by closing the source memory region** (`fi_close()`
+on the MR backing the local send/write/read buffer, or the remote MR of a
+read/write). Closing the MR signals the provider to cancel any in-flight operation
+that still references it. (This does **not** apply to MRs referenced by posted
+receives — the provider fails to close such an MR; the only way to abort receives
+is to close the endpoint.)
+
+To make the *receiver* side consistent after such an abort, the provider sends an
+**`EFA_RDM_PEER_ERROR_PKT`** control packet. The model is **"receiver-decides"**:
+
+- The **rxe** (receive op) emits its `PEER_ERROR_PKT` eagerly at mark time; the
+  **txe** (transmit op) defers its emit. Each ope carries a provider errno to
+  attach to the packet and a flag
+  (`EFA_RDM_PEER_ERROR_EMITTED_OR_SKIPPED`, `BIT_ULL(21)`) so it is emitted at most
+  once (see [prov/efa/src/rdm/efa_rdm_ope.h](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/rdm/efa_rdm_ope.h)).
+- The packet carries the **emitter's ope type** so the receiver can resolve the
+  matching rxe/txe via the peer's `rxe_list` and unblock the reorder window.
+- Aborting cancels in-flight **LONGREAD** RTMs and rebalances the read counter;
+  aborted overflow packets are turned into in-place abort markers; pre-handshake
+  peer-abort emits are **deferred until the handshake** completes.
+
+**Version / capability requirement.** PEER_ERROR support is negotiated in the
+handshake via an extra-feature bit
+(`EFA_RDM_EXTRA_FEATURE_PEER_ERROR`, `efa_rdm_peer_support_peer_error()` in
+[prov/efa/src/rdm/efa_rdm_peer.h](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/rdm/efa_rdm_peer.h)).
+A peer without the bit cannot decode a `PEER_ERROR_PKT`, so the provider does not
+emit one and falls back to the legacy behavior (leak the txe / write a local CQ
+error). Per the [fi_efa man page](https://github.com/ofiwg/libfabric/blob/main/man/fi_efa.7.md)
+**"MR ABORTING" section, MR-abort behavior is undefined unless both participants
+run libfabric 2.7.0 or later** — an older peer cannot distinguish a control message
+of the current transfer from one of an earlier, aborted transfer, risking
+communication-state corruption.
+
+**Scope.** Peer notification / remote-side cleanup on MR abort applies to **send and
+tagged operations only**. Device RMA operations that reference a closed MR need no
+peer cleanup (the initiator gets a local error completion, no provider state exists
+on the peer). Emulated RMA and atomic operations are **not** supported — closing an
+MR referenced by an in-flight emulated operation is undefined behavior.
+
+## Provider-internal locking and threading
+
+libfabric 2.7 reworked the EFA provider's locking to reduce contention and to make
+the lock discipline machine-checkable. Highlights (the cross-stack model is in
+[threading-model.md](threading-model.md); this section covers the provider-internal
+detail):
+
+- **Lock-free per-endpoint peer map.** The peer state is held in a per-endpoint,
+  `fi_addr`-indexed map with **lock-free reads** on the fast path.
+- **Lock-free `efa_av_array`.** A new lock-free address-vector array
+  ([prov/efa/src/efa_av_array.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_av_array.c) / `.h`)
+  replaces lock-protected AV lookups.
+- **srx lock moved from domain to endpoint**, and **removed** from AV operations,
+  EP enable, and SHM address lookup. Under `FI_THREAD_COMPLETION` the srx lock is
+  made `OFI_LOCK_NONE` (no-op), since completion-threading already partitions work
+  by CQ.
+- **`util_domain` lock made a no-op under `FI_PROGRESS_CONTROL_UNIFIED`.**
+- **Queued progress lists moved from domain to endpoint**, plus a `progress_ep_list`
+  so CQ progress can **skip idle endpoints** rather than walking every EP on the domain.
+- **`domain->num_read_msg_in_flight` made atomic** so the RDMA-read balance counter
+  no longer needs a lock.
+- **Thread-safety-analysis annotations.** New
+  [prov/efa/src/efa_thread_annotations.h](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_thread_annotations.h)
+  defines `OFI_TSA_*` macros (Clang `-Wthread-safety` `guarded_by`, `requires_capability`,
+  `acquire/release_capability`, `OFI_TSA_NO_ANALYSIS`, …). Building with
+  `configure --enable-thread-safety-analysis` turns these into compile-time lock-discipline
+  checks. For example, the data-path-direct wrid pool documents that post and
+  completion must serialize on `wq->wqlock`
+  (`assert(ofi_genlock_held(wq->wqlock))`), and several CQ-path helpers are marked
+  `OFI_TSA_NO_ANALYSIS` because they run under the CQ lock.
+
+**Supported endpoint threading models** (from
+[man/fi_efa.7.md](https://github.com/ofiwg/libfabric/blob/main/man/fi_efa.7.md)):
+both RDM and DGRAM endpoints support **`FI_THREAD_SAFE`**, **`FI_THREAD_COMPLETION`**
+and **`FI_THREAD_DOMAIN`**.
+
+## Other provider changes (libfabric 2.7)
+
+- **QKEY generation unified across all endpoint types** — a single QKEY-generation
+  scheme is now used for RDM, DGRAM and direct endpoints.
+- **Device ID included in the "EFA-ness" discriminator** — the check that decides
+  whether an ibverbs device is an EFA device now also considers the device ID
+  (in addition to the vendor/part ID), and a separate fix corrected a **vendor ID
+  vs part ID** confusion.
+- **Robust multi-device init** — if one EFA device fails to initialize, the provider
+  continues initializing the remaining devices instead of aborting.
+
 ## Performance Characteristics
 
 ### Latency
@@ -577,11 +684,15 @@ Message Size        Bandwidth (single connection)
 ### Eager vs Rendezvous Threshold
 
 ```bash
-# Tunable threshold
-FI_EFA_RDM_LONG_MSG_SIZE=65536  # 64 KB default
+# There is no FI_EFA_RDM_LONG_MSG_SIZE knob. The real protocol-switch
+# thresholds are (defaults from prov/efa/src/efa_env.c):
+FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=65536    # 64 KB  - max size for the medium protocol
+FI_EFA_INTER_MIN_READ_MESSAGE_SIZE=1048576    # 1 MB   - min size for the read (rendezvous) protocol
+FI_EFA_INTER_MAX_GDRCOPY_MESSAGE_SIZE=32768   # 32 KB  - max size that uses gdrcopy
+FI_EFA_RUNT_SIZE=307200                       # 300 KB - bytes sent eagerly by the runting read protocol
 
-# Below threshold: eager
-# Above threshold: rendezvous
+# Below the read threshold: eager / medium / longcts
+# At or above it:          RDMA-read based rendezvous
 ```
 
 **Optimal value:**
@@ -664,8 +775,9 @@ FI_EFA_USE_DEVICE_RDMA=1
 FI_MR_CACHE_MONITOR=memhooks
 FI_MR_CACHE_MAX_SIZE=unlimited
 
-# Eager/rendezvous threshold (tune based on workload)
-FI_EFA_RDM_LONG_MSG_SIZE=65536  # 64 KB
+# Eager/medium/rendezvous thresholds (tune based on workload)
+FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=65536  # 64 KB
+FI_EFA_INTER_MIN_READ_MESSAGE_SIZE=1048576  # 1 MB
 
 # Logging (for debugging)
 FI_LOG_LEVEL=warn

@@ -562,12 +562,24 @@ PAT requires **O(log N)** internal buffers:
 - Buffer size = S/N × 2^i for step i
 - Total buffer allocation ≈ 2×S per GPU (worst case)
 
-### Current Limitations (NCCL 2.23)
+### Current Limitations (NCCL 2.23; still applies through NCCL 2.31)
 
 1. **Inter-node only**: Initial implementation for one GPU per node
 2. **No AllReduce**: Must decompose into ReduceScatter + AllGather
 3. **Simple protocol preferred**: Best with NCCL_PROTO_SIMPLE
 4. **Tuner dependency**: Requires proper tuner configuration
+
+> **AWS OFI tuner PAT optimizations (current).** The AWS region tuner now
+> actively tunes PAT in the one-rank-per-node (0x7) topology:
+> - **AllGather PAT/Simple chunk sizing on P5en** (commit cb33a4c) via the v6
+>   `getChunkSize` callback — steps a per-cluster chunk ceiling (1 MiB for
+>   `nNodes<16`, 512 KiB otherwise) down to 32 KiB to keep mid/large messages in
+>   a single pipelined phase (PAT pipelines within a phase but not across
+>   phases; inflight budget is `NCCL_STEPS = 8` per channel).
+> - **PAT channel selection on P6 and P6-B300** (commit 4a8ed08) — for
+>   PAT/Simple AllGather/ReduceScatter with `nBytes ≤ 32 MiB` and
+>   `num_nodes == num_ranks`, `nChannels` is overridden (1–2 channels) via
+>   `calculateBestNChannelPat()`. See [nccl-tuner.md](../nccl-tuner.md).
 
 ---
 
@@ -592,7 +604,7 @@ PAT requires **O(log N)** internal buffers:
    - Multi-node scaling: logarithmic >>> linear latency
 
 5. **AWS-specific considerations**:
-   - Effective on p5/p5en for inter-node communication
+   - Effective on p5/p5en/p6/p6-B300 for inter-node communication
    - Pair with NVLS/NVLS Tree for intra-node (when available)
    - EFA network: α ≈ 15 μs, bandwidth up to 200 Gbps/GPU
 
@@ -607,6 +619,6 @@ PAT requires **O(log N)** internal buffers:
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: January 2025
-**NCCL Version**: 2.23+
+**Document Version**: 1.1
+**Last Updated**: September 2026
+**NCCL Version**: PAT introduced in 2.23; cross-checked against NCCL v2.31.2-1 and aws-ofi-nccl v1.21.1

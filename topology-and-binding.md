@@ -8,6 +8,88 @@ This document describes how the OFI NCCL plugin detects network devices (EFA ada
 - GPU-NIC affinity optimization
 - Optimal channel distribution
 
+> **Note on code style below.** Many snippets in this document are
+> *illustrative pseudocode* showing the concepts (PCI parsing, affinity
+> selection). The authoritative NIC-selection logic lives in
+> [src/nccl_ofi_topo.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_topo.cpp)
+> and the per-instance defaults in
+> [src/platform-aws.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/platform-aws.cpp);
+> the two verified-against-source sections that follow ("NIC Selection: the
+> same-PCI-level filter" and "Recognized AWS Platforms") reflect the current
+> implementation.
+
+## NIC Selection: the same-PCI-level accelerator filter
+
+The plugin can prefer NICs that sit at the *same PCI level* as an accelerator
+(GPU), which usually gives the best GPU↔NIC path. This is the
+`SKIP_NICS_WITHOUT_ACCEL_AT_SAME_PCI_LEVEL` filter in
+[nccl_ofi_topo.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_topo.cpp).
+
+**The important correctness fix (commit 91bf6ac,
+"topo: Don't drop all NICs when none have a same-PCI-level accelerator"):**
+the filter is only applied when there is at least one NIC that *does* have an
+accelerator at the same PCI level to fall back on. If it were applied
+unconditionally on a topology where *no* NIC has a same-level accelerator, the
+filter would drop **every** NIC and leave the plugin with nothing to use.
+
+The decision is computed once, up front, by
+`any_nic_has_accel_at_same_level()` and passed down as `apply_skip_filter` so
+the counting pass and the populate pass agree
+([nccl_ofi_topo.cpp:433-521](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_topo.cpp)):
+
+```c
+// get_info_for_node(): only skip a NIC when the caller has determined
+// the filter is safe to apply (param enabled AND at least one NIC has an
+// accelerator at the same PCI level). Otherwise skipping would remove every
+// NIC in the system.
+if (apply_skip_filter && !has_accel_at_same_level(node)) {
+    return 0;   // filtered out
+}
+return match_info_for_node(node, info_list, ret_info);
+```
+
+Net behavior:
+- **Some NICs have a same-level accelerator:** those NICs are preferred; NICs
+  without one are dropped (they have a better sibling to use instead).
+- **No NIC has a same-level accelerator:** the filter is *not* applied and all
+  NICs are kept (previously this case could erroneously drop them all).
+
+## Recognized AWS Platforms
+
+The plugin ships a table of per-instance defaults in
+[platform-aws.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/platform-aws.cpp)
+(`platform_data_map[]`). `name` entries with a `regex` are matched as POSIX
+regexes, evaluated top-to-bottom (first match wins). Current entries:
+
+| Entry name | Match | Default protocol | GDR required | EFA HW completion counter (GDAKI) | Notable env defaults |
+|------------|-------|------------------|--------------|-----------------------------------|----------------------|
+| `p4d.24xlarge`   | exact              | SENDRECV | yes | no  | `NCCL_BUFFSIZE=8388608`, `NCCL_P2P_NET_CHUNKSIZE=524288`; topology `p4d-24xl-topo.xml` |
+| `p4de.24xlarge`  | exact              | SENDRECV | yes | no  | same as p4d; topology `p4de-24xl-topo.xml` |
+| `p3dn.24xlarge`  | exact              | SENDRECV | no  | no  | `default_dup_conns=4`, latency 150 |
+| `p5.4xlarge`     | exact              | SENDRECV | no  | no  | — |
+| `p5/p5e`         | `^p5(e?\..*)`      | RDMA     | yes | no  | BUFFSIZE/CHUNKSIZE + NVLS chunk sizes, `NCCL_NET_FORCE_FLUSH=0` |
+| `p5en/p6-b200`   | `^(p5en\|p6-b200).*` | RDMA   | yes | **yes** | above + `NCCL_NETDEVS_POLICY=max:1`, latency 35 |
+| `p6-b300`        | `^p6-b300.*`       | RDMA     | yes | **yes** | above (no `NETDEVS_POLICY`), latency 35 |
+| `p-series`       | `^p([5-9]\|[0-9]{2,}).*` | RDMA | yes | no | catch-all for P6e-GB200 and later; NVLS chunk sizes, `NCCL_NET_FORCE_FLUSH=0`, latency 35 |
+| `g5.48xlarge`    | exact              | SENDRECV | no  | no  | topology `g5.48xl-topo.xml` |
+| `g7e.8xlarge`    | exact              | SENDRECV | no  | no  | BUFFSIZE/CHUNKSIZE |
+| `g7e`            | `^g7e\.(12\|24\|48)xlarge` | RDMA | yes | no | BUFFSIZE/CHUNKSIZE |
+| `Trainium Family`| `^trn.*`           | RDMA     | yes | no  | matches Trn1/**Trn2**/Trn2u; latency 75 |
+| `inf`            | `^inf.*`           | SENDRECV | yes | no  | — |
+
+Points worth noting for an agent:
+- **P6-B300 is recognized** (`^p6-b300.*`) as its own RDMA entry with the EFA
+  hardware completion counter (GDAKI) opt-in enabled. Its regex is placed
+  *before* the `p-series` catch-all so P6-B300 does not fall through to it.
+- **Trn2 / Trn2u** are matched by the `^trn.*` "Trainium Family" entry (RDMA,
+  GDR required). There is no Trn2-specific entry; the family entry covers them.
+- **`efa_hw_comp_cntr` is only `true` for `p5en/p6-b200` and `p6-b300`.** This
+  is the per-platform gate for EFA hardware completion counters used by the
+  GDAKI path (see optimizations.md); everything else defaults to `false`. The
+  unit test `tests/unit/aws_platform_mapper.cpp` asserts exactly this opt-in set.
+- **P5/P5e/P5en/P6 and later default to the RDMA protocol**; P4d/P4de/P3dn and
+  the G5/G7e.8xlarge entries default to SENDRECV.
+
 ## Device Discovery
 
 ### Plugin Initialization and Device Enumeration

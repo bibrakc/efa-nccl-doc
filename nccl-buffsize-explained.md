@@ -16,7 +16,7 @@ This document explains the `NCCL_BUFFSIZE` environment variable, channel buffers
 
 ### Definition
 
-**File**: `nccl-2.28.9-1/src/init.cc` ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/init.cc#L699))
+**File**: [src/init.cc](https://github.com/NVIDIA/nccl/blob/master/src/init.cc) (NCCL 2.28.9 lines 699)
 
 ```c
 #define DEFAULT_BUFFSIZE (1 << 22) /* 4MiB */
@@ -29,7 +29,7 @@ export NCCL_BUFFSIZE=4194304  # 4MB (default)
 
 ### What It Controls
 
-**File**: `nccl-2.28.9-1/src/init.cc` - `computeBuffSizes()` ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/init.cc#L708-L713))
+**File**: [src/init.cc](https://github.com/NVIDIA/nccl/blob/master/src/init.cc) - `computeBuffSizes()` (NCCL 2.28.9 lines 708-713)
 
 ```c
 static ncclResult_t computeBuffSizes(struct ncclComm* comm) {
@@ -85,7 +85,7 @@ Memory = num_channels × (buffSize_Simple + buffSize_LL128 + buffSize_LL)
 
 ### The Calculation Chain
 
-**File**: `nccl-2.28.9-1/src/enqueue.cc` - `calcCollChunking()` ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/enqueue.cc#L2023))
+**File**: `calcCollChunking()`, in current NCCL at [src/enqueue/enqueue.cc](https://github.com/NVIDIA/nccl/blob/master/src/enqueue/enqueue.cc) (historically `src/enqueue.cc` at NCCL 2.28.9, line ~2023)
 
 ```c
 int stepSize   = comm->buffSizes[info->protocol]/NCCL_STEPS;
@@ -179,7 +179,7 @@ Channel buffers are **staging areas** for network transfers, not computation are
 
 #### For AllReduce (Ring Algorithm)
 
-**File**: `nccl-2.28.9-1/src/device/all_reduce.h` ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/device/all_reduce.h#L55-L64))
+**File**: [src/device/all_reduce.h](https://github.com/NVIDIA/nccl/blob/master/src/device/all_reduce.h) (NCCL 2.28.9 lines 55-64)
 
 ```c
 // Reduce-Scatter phase
@@ -196,7 +196,7 @@ if (tid < nthreads) {
 
 **What happens in `directRecvReduceDirectSend()`:**
 
-**File**: `nccl-2.28.9-1/src/device/prims_simple.h` ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/device/prims_simple.h#L925-L927))
+**File**: [src/device/prims_simple.h](https://github.com/NVIDIA/nccl/blob/master/src/device/prims_simple.h) (NCCL 2.28.9 lines 925-927)
 
 ```c
 __device__ __forceinline__ void directRecvReduceDirectSend(
@@ -207,7 +207,7 @@ __device__ __forceinline__ void directRecvReduceDirectSend(
 
 This calls `genericOp()` which performs:
 
-**File**: `nccl-2.28.9-1/src/device/prims_simple.h` ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/device/prims_simple.h#L270-L285))
+**File**: [src/device/prims_simple.h](https://github.com/NVIDIA/nccl/blob/master/src/device/prims_simple.h) (NCCL 2.28.9 lines 270-285)
 
 ```c
 // Inside genericOp() - the actual reduction
@@ -293,7 +293,7 @@ The GPU kernel:
 
 ### Pipeline Depth
 
-**File**: `nccl-2.28.9-1/src/include/device.h` ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/include/device.h#L24))
+**File**: [src/include/device.h](https://github.com/NVIDIA/nccl/blob/master/src/include/device.h) (NCCL 2.28.9 lines 24)
 
 ```c
 #define NCCL_STEPS 8
@@ -334,7 +334,7 @@ Step 7:                             [GPU→Buf][Send    ][Complete]
 Up to 8 operations can be in-flight simultaneously
 ```
 
-**File**: `nccl-2.28.9-1/src/transport/net.cc` ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/transport/net.cc#L1269-L1271))
+**File**: [src/transport/net.cc](https://github.com/NVIDIA/nccl/blob/master/src/transport/net.cc) (NCCL 2.28.9 lines 1269-1271)
 
 ```c
 // Check if we can post more sends (pipeline depth limit)
@@ -349,7 +349,7 @@ if (sub->posted < sub->nsteps && sub->posted < sub->done + maxDepth) {
 
 ### The Hierarchy
 
-**File**: `nccl-2.28.9-1/src/include/collectives.h` ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/include/collectives.h#L16-L18))
+**File**: [src/include/collectives.h](https://github.com/NVIDIA/nccl/blob/master/src/include/collectives.h) (NCCL 2.28.9 lines 16-18)
 
 ```c
 // CHUNKSIZE must be a multiple of SLICESIZE
@@ -386,7 +386,7 @@ For AllReduce (Ring + Simple):
 
 **Slice is the unit of network transfer:**
 
-**File**: `nccl-2.28.9-1/src/transport/net.cc` ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/transport/net.cc#L1322))
+**File**: [src/transport/net.cc](https://github.com/NVIDIA/nccl/blob/master/src/transport/net.cc) (NCCL 2.28.9 lines 1322)
 
 ```c
 // One isend() call per slice
@@ -403,7 +403,7 @@ NCCLCHECK(proxyState->ncclNet->isend(
 
 **Advancement:**
 
-**File**: `nccl-2.28.9-1/src/transport/net.cc` ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/transport/net.cc#L1327))
+**File**: [src/transport/net.cc](https://github.com/NVIDIA/nccl/blob/master/src/transport/net.cc) (NCCL 2.28.9 lines 1327)
 
 ```c
 sub->transmitted += args->sliceSteps;  // Advance by 2 steps
@@ -553,7 +553,7 @@ export NCCL_NCHANNELS=4
 
 ### GPU Kernel Execution
 
-**File**: `nccl-2.28.9-1/src/device/prims_simple.h` - `genericOp()` ([local](file:///home/cloonan/dev/nccl-2.28.9-1/src/device/prims_simple.h#L184-L350))
+**File**: [src/device/prims_simple.h](https://github.com/NVIDIA/nccl/blob/master/src/device/prims_simple.h) - `genericOp()` (NCCL 2.28.9 lines 184-350)
 
 The `genericOp()` function orchestrates:
 
@@ -690,7 +690,7 @@ Message Size per GPU    Recommended BUFFSIZE
 
 ### Key Files
 - `nccl-2.28.9-1/src/init.cc` - Buffer size initialization
-- `nccl-2.28.9-1/src/enqueue.cc` - Chunk/slice calculation
+- `src/enqueue/enqueue.cc` - Chunk/slice calculation (was `src/enqueue.cc` before the 2.31 reorganization)
 - `nccl-2.28.9-1/src/device/prims_simple.h` - GPU primitives
 - `nccl-2.28.9-1/src/transport/net.cc` - Network sends
 
@@ -709,4 +709,4 @@ Message Size per GPU    Recommended BUFFSIZE
 
 **Last Updated**: 2026-01-30
 
-**Source**: NCCL 2.28.9 source code analysis
+**Source**: NCCL 2.28.9 source code analysis, re-verified against NCCL v2.31.2-1 (`DEFAULT_BUFFSIZE = 1<<22` = 4 MiB in `src/init.cc`; `NCCL_STEPS = 8` in `src/include/device.h`; `computeBuffSizes()` in `src/init.cc`; `calcCollChunking()` in `src/enqueue/enqueue.cc`. Buffer/chunk sizing logic unchanged in 2.31.)

@@ -471,7 +471,7 @@ BW = 1GB / 163.4ms ≈ 6.1 GB/s
 - p5.48xlarge (H100)
 - p5e.48xlarge (H100)
 - p5en.48xlarge (H200)
-- Future p6 (Blackwell)
+- p6 (Blackwell B200) and p6-B300 — both are now recognized platforms in the AWS OFI tuner (`NCCL_OFI_TUNER_P6`, `NCCL_OFI_TUNER_P6_B300`)
 
 **Not supported**:
 - p4d/p4de (A100 - no NVSwitch)
@@ -541,7 +541,7 @@ For very large clusters:
 | **Hardware** | NVSwitch with NVLink4+ (Hopper/Blackwell) |
 | **Scalability** | O(1) intra-node, O(log M) inter-node |
 | **Best for** | Medium messages (32 KB - 128 MB) on p5/p5en |
-| **AWS Instances** | p5, p5e, p5en (future p6) |
+| **AWS Instances** | p5, p5e, p5en, p6 (B200), p6-B300 |
 
 **Key Takeaways**:
 1. **NVLS provides hardware-accelerated multicast/reduction** via NVSwitch

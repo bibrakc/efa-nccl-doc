@@ -2,12 +2,42 @@
 
 ## Overview
 
-This document traces all libfabric calls for a **hybrid LSA all-to-all** operation using NCCL's GPU-Initiated Networking (GIN) with the new `putSignal` API. The scenario involves:
+This document traces the libfabric calls for a **hybrid LSA all-to-all** operation using
+NCCL's GPU-Initiated Networking (GIN) with the `putSignal` API. The scenario involves:
 
 - **16 nodes** with **8 GPUs per node** = **128 total ranks**
 - **Hybrid communication**: LSA (Load Store Access) for intra-node, GIN for inter-node
-- **New putSignal API**: Combines RDMA write with remote signal increment
+- **putSignal API**: Combines RDMA write with remote signal increment
 - **Test**: `nccl-tests` all-to-all via GIN through NCCL Device API
+
+> **Which GIN path does this trace cover?** The aws-ofi-nccl plugin exposes two GIN data
+> paths (see [nccl-ep-vs-deepep-comparison.md](nccl-ep-vs-deepep-comparison.md), section 10):
+>
+> - **Host / CPU-proxy path** — a CPU progress thread posts network operations on the GPU's
+>   behalf. Exported as `ncclRmaPlugin_v14` / `ncclRmaPlugin_v15` (and legacy
+>   `ncclGinPlugin_v11` / `ncclGinPlugin_v13`) in
+>   [src/rdma/gin/nccl_ofi_gin_api.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_api.cpp).
+> - **EFA-GDA / GDAKI path** — the GPU kernel writes work-queue entries and polls
+>   completion-queue entries directly, with **no CPU in the critical path**. Exported as
+>   `ncclGinPlugin_v14` in
+>   [src/rdma/gin/nccl_ofi_gin_gdaki.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_gdaki.cpp).
+>
+> **The detailed step-by-step trace below is the host / CPU-proxy path** (the `fi_writedata`
+> + `fi_send` metadata + gdrcopy-signal sequence). GDAKI is auto-enabled by the plugin where
+> supported (removed knob `OFI_NCCL_GIN_TYPE`, commit `80f2c78`); its very different call
+> shape is described in the dedicated **[GDAKI (EFA-GDA) trace](#gdaki-efa-gda-trace)**
+> section. Where NCCL binds the GDAKI op-table (EFA on P5en/P6, `NCCL_GIN_TYPE=5`), the proxy
+> steps below do **not** occur on the data path.
+
+> **libfabric data-path-direct (affects both paths):** The EFA provider now defaults
+> `FI_EFA_USE_DATA_PATH_DIRECT=true`
+> ([prov/efa/src/efa_env.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_env.c), `.use_data_path_direct = true`).
+> On supported devices the provider **writes WQEs and reads CQEs directly** from userspace
+> rather than calling into `ibv_post_send()` / `ibv_poll_cq()` for every operation. So even
+> in the proxy trace below, a call such as `fi_writedata()` / `fi_cq_read()` is serviced by
+> the provider's direct data path (`efa_data_path_direct_*`) instead of the classic verbs
+> post/poll calls. This shortens the software path but does not change the SRD ordering
+> semantics or the sequence of libfabric verbs shown here.
 
 ## Architecture Context
 
@@ -18,11 +48,12 @@ NCCL Device API Kernel (HybridAlltoAllKernel)
     ↓ (for remote peers)
 GIN putSignal API
     ↓
-aws-ofi-nccl Plugin (GIN implementation)
+aws-ofi-nccl Plugin — host/proxy path: src/rdma/gin/nccl_ofi_gin.cpp
+                       GDAKI path:      src/rdma/gin/nccl_ofi_gin_gdaki.cpp
     ↓
-Libfabric (EFA provider)
+Libfabric (EFA provider; FI_EFA_USE_DATA_PATH_DIRECT=true by default)
     ↓
-rdma-core (libibverbs)
+rdma-core (libibverbs)   ← bypassed on the data path when data-path-direct is active
     ↓
 EFA Kernel Driver
     ↓
@@ -48,7 +79,7 @@ Each rank performs:
 
 ### 1. Fabric and Domain Setup
 
-**Location**: `aws-ofi-nccl/src/gin/nccl_ofi_gin_resources.cpp`
+**Location**: `aws-ofi-nccl/src/rdma/gin/nccl_ofi_gin_resources.cpp`
 
 ```c
 // Query available providers
@@ -149,7 +180,7 @@ fi_enable(ep);
 
 ### 4. Memory Registration
 
-**Location**: `aws-ofi-nccl/src/gin/nccl_ofi_gin_resources.cpp:reg_mr()`
+**Location**: `aws-ofi-nccl/src/rdma/gin/nccl_ofi_gin_resources.cpp:reg_mr()`
 
 For send buffer:
 ```c
@@ -187,7 +218,7 @@ fi_mr_regattr(domain, &mr_attr, 0, &signal_mr);
 
 ### 5. Receive Buffer Posting
 
-**Location**: `aws-ofi-nccl/src/gin/nccl_ofi_gin_reqs.cpp:post()`
+**Location**: `aws-ofi-nccl/src/rdma/gin/nccl_ofi_gin_reqs.cpp:post()`
 
 ```c
 // Post receive buffers for metadata messages
@@ -225,7 +256,7 @@ for (int i = 0; i < NUM_RECV_BUFFS; i++) {
 
 ### Kernel Launch and Barrier Synchronization
 
-**Location**: `nccl-2.29.2-1/examples/06_device_api/03_gin_alltoall_hybrid/main.cu`
+**Location**: `nccl/examples/06_device_api/03_gin_alltoall_hybrid/main.cu`
 
 ```cuda
 __global__ void HybridAlltoAllKernel(...) {
@@ -279,7 +310,7 @@ while (barrier_count < 128) {
 
 ### Thread-Level Parallelism
 
-**Location**: `nccl-2.29.2-1/examples/06_device_api/03_gin_alltoall_hybrid/main.cu`
+**Location**: `nccl/examples/06_device_api/03_gin_alltoall_hybrid/main.cu`
 
 ```cuda
 int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -301,7 +332,7 @@ for (int r = startLsa + lsaSize + tid; r < world.nRanks; r += nthreads) {
 
 ### Single putSignal Timing Breakdown
 
-**Location**: `aws-ofi-nccl/src/gin/nccl_ofi_gin.cpp:iputSignal()`
+**Location**: `aws-ofi-nccl/src/rdma/gin/nccl_ofi_gin.cpp:iputSignal()`
 
 #### Step 1: fi_writedata() - RDMA Write-with-Immediate
 
@@ -368,7 +399,7 @@ fi_send(ep, &metadata, sizeof(metadata), desc, remote_addr, &ctx);
 - **Transfer time**: 480 KB / (400 Gbps / 8) = **~10 μs**
 
 **Latency-bound** (for small messages):
-- **RTT**: ~35 μs (p5en with EFAv3)
+- **RTT**: ~35 μs (estimate for p5en with EFAv3; not measured in this trace)
 - **Pipelined**: First completion at ~35 μs, last at ~45 μs
 
 **Total data transfer time**: **~35-50 μs** (latency-dominated for small messages)
@@ -377,7 +408,7 @@ fi_send(ep, &metadata, sizeof(metadata), desc, remote_addr, &ctx);
 
 #### Receiver Side: fi_cq_readfrom() Polling
 
-**Location**: `aws-ofi-nccl/src/gin/nccl_ofi_gin_resources.cpp`
+**Location**: `aws-ofi-nccl/src/rdma/gin/nccl_ofi_gin_resources.cpp`
 
 ```c
 // Continuous polling loop (progress thread)
@@ -417,30 +448,45 @@ while (true) {
 
 **Total receive processing**: **~25 μs**
 
-#### Signal Execution Timing
+#### Signal Execution Timing (host / proxy path)
 
-**Location**: `aws-ofi-nccl/src/gin/nccl_ofi_gin.cpp:do_gin_signal()`
+**Location**: `aws-ofi-nccl/src/rdma/gin/nccl_ofi_gin.cpp:do_gin_signal_and_trace()` and the
+shared gdrcopy worker loop (see `gin_signal_work_entry` / `work_queue`).
 
 ```c
-// Atomic increment via GDRCopy
-copy_from_device(gdr_handle, signal_offset, &old_value, 8);  // Read
+// Signal increment via GDRCopy (read-modify-write on the CPU-mapped counter)
+copy_from_device(*work.gdr_handle, signal_offset, &old_value, 8);  // Read
 uint64_t new_value = old_value + signal_value;
-copy_to_device(gdr_handle, signal_offset, &new_value, 8);    // Write
+copy_to_device(&new_value, *work.gdr_handle, signal_offset, 8);    // Write
 ```
 
-**Timing per signal**:
+**Current architecture (updated):**
+- The plugin now runs **one gdrcopy worker per process** with **signal coalescing** (commit
+  `ad6dcac`), rather than doing the read-modify-write inline on each progress thread.
+- Progress threads hand signal work to the worker through a new lock-free **MPSC ring**
+  ([include/nccl_ofi_mpsc_ring.h](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_mpsc_ring.h), commit `3e5687e`); the worker drains the ring and coalesces
+  updates to the same counter.
+- Signal memory is **registered one segment at a time** in the host proxy (commit `80d995c`).
+- The **recv-req pool return is deferred until the gdrcopy signal completes** (commit
+  `5a7bcba`), so a request is not recycled before its counter update is durable.
+- **Signals are always strong** now: `OFI_NCCL_GIN_STRONG_SIGNAL` and the weak-signal mode
+  were removed in commit `aa80b54`. The `isStrongSignal` argument carried by the
+  `ncclRma_v14/v15` `iputSignal` prototypes is accepted and ignored.
+
+**Timing per signal** (approximate, unchanged order of magnitude):
 - **GDRCopy read**: ~200-300 ns
 - **Increment**: ~1 ns
 - **GDRCopy write**: ~200-300 ns
-- **Total**: ~500-600 ns per signal
+- **Total**: ~500-600 ns per signal (before coalescing; coalescing reduces the effective
+  count when many updates target the same counter)
 
-**120 signals**: 120 × 600 ns = **~72 μs**
+**120 signals**: up to 120 × 600 ns ≈ **~72 μs** worst case; less with coalescing.
 
-**Concurrency**: Signals processed sequentially (per rank)
+**Concurrency**: signal RMW is funneled through the single per-process gdrcopy worker.
 
 #### Acknowledgment Phase
 
-**Location**: `aws-ofi-nccl/src/gin/nccl_ofi_gin.cpp:send_writedata_ack()`
+**Location**: `aws-ofi-nccl/src/rdma/gin/nccl_ofi_gin.cpp:send_writedata_ack()`
 
 ```c
 // Send ACK back to initiator (zero-length write with immediate)
@@ -720,8 +766,9 @@ double baseBw = (double)(count * nranks * typesize) / 1.0E9 / sec;
 
 ### For GIN Hybrid All-to-All Specifically
 
-**Measured time per iteration**: ~455 μs
-- Dominated by network latency (~35 μs RTT)
+**Estimated time per iteration**: ~455 μs — this is the arithmetic sum of the component
+estimates below, not a benchmark result:
+- Dominated by network latency (~35 μs RTT estimate)
 - Barriers add ~200 μs overhead
 - Signal execution adds ~72 μs
 
@@ -734,5 +781,88 @@ double baseBw = (double)(count * nranks * typesize) / 1.0E9 / sec;
 - First iteration: ~150 ms + 455 μs ≈ **150.5 ms**
 - Subsequent iterations: **455 μs each**
 - 20 iterations: 150 ms + (20 × 455 μs) ≈ **159 ms total**
-- **Reported average**: 455 μs (excludes initialization)
+- **Estimated steady-state average**: 455 μs (excludes initialization). Treat as an
+  order-of-magnitude figure derived from the component estimates above; measure on your
+  own instance before drawing conclusions.
 
+
+
+---
+
+## GDAKI (EFA-GDA) Trace
+
+The trace above is the **host / CPU-proxy** path. On EFA-GDA-capable instances (P5en,
+P6-B200, P6-B300) with a GDAKI-capable stack, NCCL binds the **`ncclGinPlugin_v14`** GDAKI
+op-table ([src/rdma/gin/nccl_ofi_gin_gdaki.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_gdaki.cpp), `name = "Libfabric_GDAKI"`) instead. The plugin
+auto-detects GDAKI via `nccl_ofi_gin_gdaki_capable()`
+([include/rdma/gin/nccl_ofi_gin_gdaki.h](https://github.com/aws/aws-ofi-nccl/blob/master/include/rdma/gin/nccl_ofi_gin_gdaki.h)): GDAKI compiled in (`HAVE_GDAKI`) **and** runtime
+libfabric ≥ 2.5 **and** DMA-BUF viable **and** an EFA provider. `OFI_NCCL_GIN_TYPE` no longer
+exists (removed in commit `80f2c78`); on the NCCL side `NCCL_GIN_TYPE=5` selects this table
+because NCCL 2.31 otherwise defaults to the proxy table for EFA.
+
+### How the data path differs from the proxy trace
+
+| Stage | Host / proxy path (above) | GDAKI / EFA-GDA path |
+|-------|---------------------------|----------------------|
+| Who posts the op | CPU progress thread calls `fi_writedata()` / `fi_send()` | **GPU kernel** writes the WQE into the QP's send queue in GPU-visible memory and rings the doorbell — no plugin/host call per op |
+| Completion | CPU progress thread polls `fi_cq_read()` / `fi_cq_readfrom()` | **GPU kernel** reads the CQE directly from the CQ buffer |
+| Signal delivery | gdrcopy read-modify-write via the per-process gdrcopy worker + MPSC ring | **indexed hardware signals / counters** on the EFA device (target-indexed, asymmetric counts — commit `f3dd9cd`); GDRCopy registration is skipped entirely in GDAKI mode (commit `5b163ed`) |
+| Metadata `fi_send` | separate 48-byte metadata send per putSignal | not used the same way; signaling is via device counters/signals |
+| CPU involvement | GPU→CPU→NIC on the critical path | **none** on the critical path |
+
+### GDAKI context / resource setup (once per context)
+
+**Location**: `createContext_v14` in
+[src/rdma/gin/nccl_ofi_gin_gdaki.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_gdaki.cpp) and
+[src/rdma/gin/nccl_ofi_gin_gdaki_resources.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_gdaki_resources.cpp).
+
+1. `createContext_v14` **validates `config->backendVersion`** against
+   `NCCL_OFI_GDAKI_MAX_BACKEND_VERSION` (commit `f8e945e`) — it refuses a version it cannot
+   build a matching device struct for, rather than risk silent memory corruption.
+2. Per logical context `c`, bind to **rail `c % num_rails`**
+   (`effective_rails = min(nContexts, num_rails)`, capped at `NCCL_OFI_GDAKI_MAX_RAILS = 2`,
+   commit `cb00654`). Each rail's endpoints open on that rail's libfabric domain.
+3. Open the GDAKI endpoint(s) with **`FI_HMEM` requested on the hints** (commit `06f08e5`),
+   plus a **dedicated data endpoint used only for sending PutValues** (commit `6a3ba5f`)
+   whose counter is bound for **reads as well as writes** (commit `d840aa1`).
+4. Map the EFA MMIO doorbell region into the GPU address space (requires the NVIDIA driver
+   with `PeerMappingOverride=1`); the GPU rings the doorbell directly.
+5. Set up **indexed signal shadowing** to avoid a signal read-modify-write (commit
+   `dea6e05`); the never-reset signal shadow is sized from the **full MR** (commit `5b46cd5`).
+   Counter device handles get `local_cntr_value` populated (commit `44d0b55`).
+6. The **EFA hardware completion counter** is gated per platform via
+   `OFI_NCCL_GDAKI_EFA_HW_COUNTER` (`AUTO`/`ON`/`OFF`, default `AUTO`) and
+   `PlatformAWS::config_gdaki_domain()` (commit `5b1f6dd`).
+7. Doorbell coalescing uses **`FI_MORE`** on the aggregate hint (commit `a3d2680`).
+
+### Per-op data path (per putSignal, GDAKI)
+
+Because there is no plugin/host call per op, there is **no libfabric `fi_*` call per
+putSignal** on the GDAKI data path. The GPU kernel:
+
+1. Builds the SRD send WQE for the RDMA write in the QP's GPU-visible send queue.
+2. Rings the EFA doorbell (MMIO write) — the WQE, and coalesced doorbells with `FI_MORE`
+   where applicable, go straight to the NIC.
+3. Signals the target via an **indexed device signal/counter** (target-indexed addressing),
+   not a gdrcopy RMW.
+4. Polls the CQ buffer directly (and/or the hardware completion counter) to observe
+   completion.
+
+The EFA provider's **data-path-direct** code (default on) is what makes the direct
+WQE-write / CQE-read possible; `ibv_post_send()` / `ibv_poll_cq()` are not on this path.
+
+### Timing intuition (GDAKI vs proxy)
+
+For the same 16-node / 128-rank / 120-remote-peer alltoall:
+
+- **Proxy path**: dominated by the GPU→CPU→NIC hop and the gdrcopy signal RMW; per-iteration
+  time is in the ~455 μs range estimated above.
+- **GDAKI path**: removes the CPU hop and the gdrcopy signal RMW from the critical path. The
+  network RTT (~35 μs) and barrier overhead still dominate, but the per-op software cost
+  drops sharply because the GPU posts and reaps completions directly. Expect lower dispatch/
+  combine latency than the proxy path on the same hardware (exact figures depend on instance
+  type and message size; treat proxy-vs-GDAKI deltas as workload-specific).
+
+> **Note:** `NCCL_SYM_GIN_KERNELS_ENABLE=0` is currently required with EFA-GDA — the
+> symmetric GIN kernels for NCCL collectives are not yet supported on that path (see the
+> plugin's GIN getting-started guide).

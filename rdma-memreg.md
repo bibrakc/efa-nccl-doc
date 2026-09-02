@@ -96,6 +96,44 @@ Cache hit (lookup)         ~0.1-1 μs
 - **Registering on every transfer kills performance**
 - **Caching is absolutely critical**
 
+### EFA Kernel Driver r3.3.0 Registration Changes
+
+The EFA kernel driver r3.3.0 (amzn-drivers) made several registration-path
+changes that directly affect registration cost and the number of MRs a device
+can hold:
+
+- **>4GB MR page size support.** The driver can now register memory using a
+  page size large enough that a single MR spans more than 4GB
+  (`amzn-drivers/kernel/linux/efa/RELEASENOTES.md:15`,
+  "Add driver support for >4GB MR page size"; commit **bf83e44**). Fewer, larger
+  MRs mean fewer registrations and fewer PBL entries per byte of memory.
+- **Extended page-shift field in MR registration.** The registration parameters
+  gained an explicit `u8 page_shift`
+  ([efa_com_cmd.h:206](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_com_cmd.h))
+  computed from the MR's chosen page size rather than being hard-wired to the
+  host `PAGE_SHIFT`
+  ([efa_data_verbs.c:198-210](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_data_verbs.c),
+  `page_shift = order_base_2(mr->ibmr.page_size)`; commit **a1e35dc**). This is
+  what lets the >4GB page size be expressed to the device.
+- **PBL chunk-length computation fix.** The physical buffer list (PBL) indirect
+  chunk list sizing was corrected
+  ([efa_verbs.c:2237-2410](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.c),
+  `pbl_chunk_list_create`; commit **4eec543**), preventing miscomputed chunk
+  lengths for large registrations.
+- **Address-handle (AH) cache via rhashtable.** The driver now caches AH device
+  objects and reuses them instead of recreating an AH per peer
+  ([efa_ah_cache.c](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_ah_cache.c),
+  [efa_ah_cache.h](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_ah_cache.h);
+  commits **f95ece8**, **32e9eb1**). The cache is a kernel `rhashtable` keyed by
+  `{pd, gid}`
+  ([efa_com_cmd.c:348-422](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_com_cmd.c))
+  with `get`/`put`/`lookup` refcounted entries. This does not speed up *memory*
+  registration, but it removes redundant AH creation cost on the connection path
+  when many peers share a protection domain.
+
+> These are kernel-driver changes; they take effect when the r3.3.0 EFA driver
+> is loaded, independent of the libfabric/plugin version.
+
 ## Memory Registration in the Stack
 
 ### Application Level (NCCL)
@@ -256,7 +294,10 @@ int efa_reg_mr(struct ib_pd *ibpd,
     .pd = to_epd(ibpd)->pdn,
     .iova = virt_addr,
     .mr_length = length,
-    .page_shift = PAGE_SHIFT,
+    // r3.3.0: page_shift is derived from the MR's chosen page size
+    // (order_base_2(mr->ibmr.page_size)), not hard-wired to host PAGE_SHIFT.
+    // This is what enables >4GB single-MR page sizes.
+    .page_shift = order_base_2(mr->ibmr.page_size),
     .page_num = npages,
   };
 
@@ -581,7 +622,10 @@ FI_MR_CACHE_MAX_COUNT=unlimited  # or count limit
 FI_MR_CACHE_MONITOR=memhooks    # or userfaultfd, disabled
 
 # NCCL-specific (plugin level)
-NCCL_IB_MR_CACHE=1              # Enable cache (default)
+# There is no NCCL_IB_MR_CACHE variable, and NCCL_IB_* knobs do not apply to EFA.
+# MR caching on this stack is controlled at two levels:
+OFI_NCCL_MR_CACHE_DISABLE=0     # plugin-level cache (default 0 = cache enabled)
+FI_EFA_MR_CACHE_ENABLE=1        # provider-level cache (default 1)
 ```
 
 ## RDMA Operations in Detail
@@ -828,6 +872,23 @@ perf report
 ```
 
 **Solution**: Ensure cache is enabled and working
+
+### Registration-Path Fixes (aws-ofi-nccl, 2026)
+
+Two recent correctness fixes touch the registration path and are worth knowing
+when debugging hangs or leaks:
+
+- **`gin: Fix regMrSym hang caused by duplicate detection`** (commit
+  **4b778f3**). Symmetric memory registration (`regMrSym`) on the GIN path could
+  hang when duplicate-detection logic mishandled a repeated registration.
+- **`rdma: Fix memory leak of rx_buff_regmr_ctx in fini_rx_buffers()`** (commit
+  **aaef93d**). The RDMA transport leaked the `rx_buff_regmr_ctx` context when
+  tearing down receive buffers; the deregistration context is now freed in
+  `fini_rx_buffers()`.
+
+If you are on a build predating these commits and see a `regMrSym` hang or a
+slow memory leak proportional to connection churn, these are the likely
+culprits.
 
 ## Summary
 

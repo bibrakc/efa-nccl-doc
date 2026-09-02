@@ -80,7 +80,7 @@ Benefits:
 
 ### Kernel-Side (Linux Kernel)
 
-**`struct dma_buf`** ([linux/include/linux/dma-buf.h:294-400](https://github.com/torvalds/linux/blob/e84d960/include/linux/dma-buf.h#L294-L400)):
+**`struct dma_buf`** ([linux/include/linux/dma-buf.h:294-400](https://github.com/torvalds/linux/blob/master/include/linux/dma-buf.h)):
 
 ```c
 // From linux/include/linux/dma-buf.h
@@ -136,12 +136,11 @@ struct scatterlist {
 
 ### User-Space (libfabric/rdma-core)
 
+**`struct fi_mr_dmabuf`** ([libfabric include/rdma/fi_domain.h, lines 151-156](https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_domain.h)):
+
 ```c
 // From libfabric rdma/fi_domain.h
 
-**`struct fi_mr_dmabuf`** ([libfabric/include/rdma/fi_domain.h:151-156](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L151-L156)):
-
-```c
 /**
  * struct fi_mr_dmabuf - DMA-BUF memory region descriptor
  * Used with FI_MR_DMABUF flag
@@ -249,7 +248,7 @@ static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_dmabuf(
    resp.rkey = ...;
 
 10. OFI Plugin caches MR
-    nccl_ofi_mr_cache_insert_entry(cache, &dmabuf_key, mr_handle);
+    domain->mr_cache->insert_entry(dmabuf_key, endpoint_mr, mr_handle);
 
 11. Future sends use cached MR
     fi_send(ep, gpu_ptr, size, fi_mr_desc(mr_handle), ...);
@@ -316,47 +315,63 @@ static bool kernel_version_rdma_dmabuf_ioctl_ok(void)
 }
 
 /**
- * Check provider support AND firmware compatibility
+ * Check provider support AND firmware compatibility.
+ *
+ * NOTE (updated): the EFA Gen 1-3 device-id gating that used to live here was
+ * REMOVED in aws-ofi-nccl commit 0f285d5 ("dma-buf: Don't disable dma-buf on
+ * EFAv1-3"). The function now only checks provider FI_HMEM + API version and
+ * defers to nccl_ofi_dmabuf_viable(). See src/nccl_ofi_dmabuf.cpp.
  */
 int nccl_ofi_dmabuf_viable_and_supported(struct fi_info *nic_prov)
 {
-    // Check provider has FI_HMEM and API version 1.20+
     bool dmabuf_support = ((nic_prov->caps & FI_HMEM) != 0) &&
         FI_VERSION_GE(nic_prov->fabric_attr->api_version, FI_VERSION(1, 20)) &&
         nccl_ofi_dmabuf_viable();
-
-    if (dmabuf_support && strncmp("efa", nic_prov->fabric_attr->prov_name, 3) == 0) {
-        // EFA Generation check (firmware bug in Gen 1-3)
-        // Only Gen 4+ (0xefa3+) supports dmabuf reliably
-        if (nic_prov->nic == NULL || nic_prov->nic->device_attr == NULL) {
-            NCCL_OFI_TRACE("DMA-BUF disabled due to missing nic data");
-            dmabuf_support = false;
-        } else if (strcmp("0xefa0", nic_prov->nic->device_attr->device_id) == 0 ||
-                   strcmp("0xefa1", nic_prov->nic->device_attr->device_id) == 0 ||
-                   strcmp("0xefa2", nic_prov->nic->device_attr->device_id) == 0) {
-            // Gen 1-3 have page merging issues with dmabuf
-            NCCL_OFI_TRACE("DMA-BUF disabled due to EFA device id %s",
-                          nic_prov->nic->device_attr->device_id);
-            dmabuf_support = false;
-        }
-    }
 
     return dmabuf_support;
 }
 ```
 
+> **Correction (was: EFA Gen 4+ required).** Earlier revisions of this document (and older
+> plugin code) disabled DMA-BUF on EFA Gen 1-3 (`0xefa0` / `0xefa1` / `0xefa2`) inside
+> `nccl_ofi_dmabuf_viable_and_supported()`, citing a firmware page-merging issue. That
+> device-id gating was **removed** in commit `0f285d5` (*"dma-buf: Don't disable dma-buf on
+> EFAv1-3"*). DMA-BUF viability no longer depends on the EFA generation; it depends only on:
+> libfabric ≥ 1.20 with `FI_MR_DMABUF`, the provider advertising `FI_HMEM` at API ≥ 1.20,
+> the GPU reporting DMA-BUF support, kernel ≥ 5.12, and the user not disabling it
+> (`OFI_NCCL_DISABLE_DMABUF`). See `nccl_ofi_dmabuf_viable()` below.
+
 ## EFA Hardware Generation Support
 
-| EFA Generation | Device ID | DMA-BUF Support | Notes |
-|----------------|-----------|-----------------|-------|
-| Gen 1 | 0xefa0 | ❌ No | Firmware page merging issue |
-| Gen 2 | 0xefa1 | ❌ No | Firmware page merging issue |
-| Gen 3 | 0xefa2 | ❌ No | Firmware page merging issue |
-| Gen 4+ | 0xefa3+ | ✅ Yes | Full dmabuf support |
+DMA-BUF is **no longer gated by EFA generation** in the plugin (the device-id check was
+removed in commit `0f285d5`). Historically the plugin disabled DMA-BUF on EFA Gen 1-3 due to
+a firmware/kernel page-merging issue; that issue has been addressed on the kernel side (see
+below), so the plugin now enables DMA-BUF on all EFA generations subject to the general
+preconditions (libfabric ≥ 1.20, `FI_HMEM`, GPU support, kernel ≥ 5.12).
 
-**Page Merging Issue**: Early EFA generations + kernel dmabuf code (pre-kernel patch) → too many IOMMU page entries → communication failures.
+| EFA Generation | Device ID | DMA-BUF Support (current plugin) | Historical note |
+|----------------|-----------|----------------------------------|-----------------|
+| Gen 1 | 0xefa0 | ✅ Yes (no longer gated) | previously disabled for page merging |
+| Gen 2 | 0xefa1 | ✅ Yes (no longer gated) | previously disabled for page merging |
+| Gen 3 | 0xefa2 | ✅ Yes (no longer gated) | previously disabled for page merging |
+| Gen 4+ | 0xefa3+ | ✅ Yes | always supported |
+
+**Historical Page-Merging Issue**: Early EFA generations + old kernel dmabuf code (pre-kernel
+patch) produced too many IOMMU page entries → communication failures. Fixed on the kernel
+side, which is why the plugin-side generation gating could be removed.
 
 **Kernel Patch**: https://web.git.kernel.org/pub/scm/linux/kernel/git/rdma/rdma.git/commit/?id=486055f5e09df9
+
+### EFA driver r3.3.0: >4GB MR and extended page-shift
+
+The EFA kernel driver **r3.3.0** added support for memory-region page sizes **greater than
+4 GB** and an **extended page-shift field** in MR registration (amzn-drivers commits
+[`bf83e44`](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/) and
+[`a1e35dc`](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/)). This is
+relevant to **large GPU memory registrations**: a single very large registered region can be
+described with fewer, larger page entries instead of failing or fragmenting into many small
+entries. EFA-GDA / GDAKI on P5en / P6 requires EFA driver ≥ 3.3.0.
+
 
 ## DMA-BUF vs Legacy Registration
 
@@ -475,19 +490,21 @@ int dmabuf_fd = desc.handle.fd;  // This is the dmabuf FD
 ### OFI Plugin Registration
 
 ```cpp
-// From aws-ofi-nccl (simplified)
+// From aws-ofi-nccl (simplified; the MR cache is a C++ class living on the
+// domain, guarded by domain->mr_cache_lock -- see mr-cache-implementation.md)
 int nccl_net_ofi_regmr_dmabuf(void *comm, void *data, int size,
                               int type, int dmabuf_fd, uint64_t offset,
                               void **mhandle)
 {
     nccl_net_ofi_ep_t *ep = (nccl_net_ofi_ep_t *)comm;
+    auto *domain = ep->domain_ptr.get();
 
     // Create dmabuf cache key
     nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_dmabuf(
         dmabuf_fd, offset, size, data, ep);
 
     // Try cache first
-    void *mr_handle = nccl_ofi_mr_cache_lookup_entry(ep->mr_cache, &ckey, true);
+    void *mr_handle = domain->mr_cache->lookup_entry(ckey, true);
     if (mr_handle) {
         *mhandle = mr_handle;
         return 0;  // Cache hit!
@@ -503,7 +520,7 @@ int nccl_net_ofi_regmr_dmabuf(void *comm, void *data, int size,
     fi_mr_regattr(ep->domain, &attr, FI_MR_DMABUF, &mr);
 
     // Cache it
-    nccl_ofi_mr_cache_insert_entry(ep->mr_cache, &ckey, true, mr);
+    domain->mr_cache->insert_entry(ckey, true, mr);
 
     *mhandle = mr;
     return 0;
@@ -637,7 +654,7 @@ static int ib_umem_dmabuf_map_pages(struct ib_umem_dmabuf *umem)
 |--------|---------|
 | **Kernel requirement** | Linux 5.12+ (RDMA dmabuf ioctls) |
 | **Libfabric requirement** | 1.20+ (FI_MR_DMABUF flag) |
-| **EFA requirement** | Gen 4+ (0xefa3+) |
+| **EFA requirement** | All EFA generations (Gen 1-3 gating removed, commit `0f285d5`) |
 | **GPU requirement** | CUDA 11.7+, ROCm 5.0+, or any dmabuf-capable GPU |
 | **API** | `fi_mr_regattr(..., FI_MR_DMABUF)` |
 | **Key benefit** | Vendor-neutral, better page merging |
@@ -645,11 +662,31 @@ static int ib_umem_dmabuf_map_pages(struct ib_umem_dmabuf *umem)
 
 **Key Takeaways**:
 1. DMA-BUF is the **modern, standard way** to register GPU memory for RDMA
-2. Requires kernel 5.12+, libfabric 1.20+, EFA Gen 4+
+2. Requires kernel 5.12+, libfabric 1.20+; **no longer gated by EFA generation** (works on
+   Gen 1-3 too since commit `0f285d5`)
 3. **Vendor-neutral**: Works with NVIDIA, AMD, Intel GPUs
 4. **Better IOMMU efficiency**: Page merging can significantly reduce IOMMU entries (estimated 100-500x reduction)
 5. Same performance as legacy GDR, but cleaner and more maintainable
 6. Registration is still expensive (100-500 μs) - **caching is critical**
+7. **EFA driver r3.3.0** adds >4GB MR page-size support + an extended page-shift field,
+   improving large GPU registrations (amzn-drivers `bf83e44`, `a1e35dc`)
+
+### libfabric 2.7 hmem/cuda additions (relevant to DMA-BUF export)
+
+libfabric 2.7 (`main`, verified against `cb6364e05`, 2.7.0rc1) adds several hmem/CUDA
+capabilities that touch the DMA-BUF export path:
+
+- **Async copy operations** in the CUDA hmem interface (e.g. `cuMemcpyDtoDAsync` /
+  `cudaMemcpyAsync` wrappers in [prov core hmem_cuda.c](https://github.com/ofiwg/libfabric/blob/main/src/hmem_cuda.c)).
+- **Exposed CUDA driver functions** for context/memory management, so the core can manage
+  CUDA context and allocations via the driver API rather than the runtime.
+- **`cuda_get_dmabuf_fd()` skips `cuMemGetAddressRange()`**
+  ([src/hmem_cuda.c](https://github.com/ofiwg/libfabric/blob/main/src/hmem_cuda.c)): it now
+  uses the caller-provided address and size directly and only page-aligns them before calling
+  `cuMemGetHandleForAddressRange`. This matters for **CUDA VMM allocations** with multiple
+  physical segments mapped into one contiguous VA range, where `cuMemGetAddressRange()` would
+  return only the size of the individual segment containing the pointer, not the full reserved
+  VA range — which would truncate the exported dmabuf.
 
 **Related Documentation**:
 - [mr-cache-implementation.md](mr-cache-implementation.md) - MR cache (works with dmabuf keys)
@@ -664,12 +701,12 @@ static int ib_umem_dmabuf_map_pages(struct ib_umem_dmabuf *umem)
 ### Structures
 
 **Linux Kernel (DMA-BUF subsystem)**:
-- `struct dma_buf` ([linux/include/linux/dma-buf.h:294-400](https://github.com/torvalds/linux/blob/e84d960/include/linux/dma-buf.h#L294-L400))
+- `struct dma_buf` ([linux/include/linux/dma-buf.h:294-400](https://github.com/torvalds/linux/blob/master/include/linux/dma-buf.h))
 - `struct dma_buf_attachment` (referenced, defined in same file)
 - `struct sg_table` (referenced, defined in linux/include/linux/scatterlist.h)
 
 **libfabric (OFI)**:
-- `struct fi_mr_dmabuf` ([include/rdma/fi_domain.h:151-156](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L151-L156))
+- `struct fi_mr_dmabuf` ([include/rdma/fi_domain.h, lines 151-156](https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_domain.h))
 
 ### Functions
 
@@ -697,4 +734,4 @@ static int ib_umem_dmabuf_map_pages(struct ib_umem_dmabuf *umem)
 - **1 CUDA function** (external NVIDIA API)
 
 All Linux kernel references link to commit `e84d960` in the [torvalds/linux](https://github.com/torvalds/linux) repository.
-All libfabric references link to commit `6b9e629` in the [ofiwg/libfabric](https://github.com/ofiwg/libfabric) repository.
+All libfabric references use branch-form links into [ofiwg/libfabric](https://github.com/ofiwg/libfabric/blob/main/) (`main`); verified against libfabric `main` `cb6364e05` (2.7.0rc1).

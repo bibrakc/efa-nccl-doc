@@ -35,21 +35,38 @@ Source GPU                                    Destination GPU
      ▼                                           │
 ┌──────────────────────────────────────┐   ┌────────────────┐
 │        Libfabric (EFA Provider)     │   │   Libfabric    │
+│  DEFAULT: data-path-direct          │   │  reads CQEs    │
+│  writes WQE → mapped SQ, MMIO DB    │   │  from mapped CQ│
 └────┬─────────────────────────────────┘   └────▲───────────┘
-     │                                           │
-     ▼                                           │
+     │  (default: dp-direct bypasses rdma-core on the data path)
+     │  (fallback: FI_EFA_USE_DATA_PATH_DIRECT=0 → rdma-core below)
+     ├───────────────────────────┐               │
+     ▼ (fallback only)           │ (default)      │
+┌──────────────────────────────┐ │       ┌────────────────┐
+│     rdma-core (libibverbs)   │ │       │  rdma-core     │
+│     - ibv_post_send/recv     │ │       │  (fallback)    │
+└────┬─────────────────────────┘ │       └────▲───────────┘
+     │                           │            │
+     ▼                           ▼            │
 ┌──────────────────────────────────────┐   ┌────────────────┐
-│     rdma-core (libibverbs)          │   │  rdma-core     │
-│     - ibv_post_send/recv            │   │  - ibv_poll_cq │
-└────┬─────────────────────────────────┘   └────▲───────────┘
-     │                                           │
-     ▼                                           │
-┌──────────────────────────────────────┐   ┌────────────────┐
-│      EFA Driver (uverbs)            │   │   EFA Driver   │
+│      EFA Driver (uverbs) / EFA NIC  │   │   EFA Driver   │
 └────┬─────────────────────────────────┘   └────▲───────────┘
      │                                           │
      └────────────────► Network ────────────────┘
 ```
+
+> **Default vs fallback.** As of current libfabric, the EFA provider sets
+> `FI_EFA_USE_DATA_PATH_DIRECT=true` **by default** (verified in
+> [libfabric/prov/efa/src/efa_env.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_env.c),
+> `.use_data_path_direct = true`). In this mode the EFA provider writes work-queue
+> entries (WQEs) directly into the memory-mapped send queue and reads completion
+> descriptors (CQEs) directly from the memory-mapped CQ buffer, ringing the
+> hardware doorbell itself via MMIO — **rdma-core/libibverbs is not on the data
+> path at all**. The rdma-core `ibv_post_send`/`ibv_poll_cq` path documented below
+> is now the **fallback**, used only when dp-direct is disabled
+> (`FI_EFA_USE_DATA_PATH_DIRECT=0`) or unavailable (`HAVE_EFA_DATA_PATH_DIRECT`
+> not compiled in). Both paths perform the same fundamental operations (WQE write
+> + MMIO doorbell, CQE poll); dp-direct simply removes the libibverbs call layer.
 
 ## Detailed Data Flow
 
@@ -57,7 +74,7 @@ Source GPU                                    Destination GPU
 
 #### 1. Application Issues Collective
 
-**NCCL API** ([nccl/src/include/nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/include/nccl.h)):
+**NCCL API** ([nccl/src/include/nccl.h](https://github.com/NVIDIA/nccl/blob/master/src/nccl.h.in)):
 
 ```c
 // User code
@@ -75,7 +92,7 @@ ncclAllReduce(sendbuff, recvbuff, count, ncclFloat,
 
 #### 2. NCCL Planning
 
-**Scheduler** ([nccl/src/enqueue.cc](https://github.com/NVIDIA/nccl/blob/master/src/enqueue.cc)):
+**Scheduler** ([nccl/src/enqueue/enqueue.cc](https://github.com/NVIDIA/nccl/blob/master/src/enqueue/enqueue.cc)):
 
 ```c
 // NCCL internal planning (simplified)
@@ -232,7 +249,7 @@ ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data, int size,
 
 #### 6. Libfabric Processing
 
-**Libfabric API** ([libfabric/include/rdma/fi_msg.h](https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_msg.h)):
+**Libfabric API** ([libfabric/include/rdma/fi_endpoint.h:306-358](https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_endpoint.h)):
 
 ```c
 // Inside OFI plugin - libfabric send operation
@@ -244,25 +261,28 @@ fi_write(ep, buf, len, desc, dest_addr, remote_addr,
 
 **EFA Provider Implementation** ([libfabric/prov/efa/src/efa_msg.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_msg.c)):
 
+The EFA provider's send op dispatches to one of two backends depending on
+`efa_env.use_data_path_direct` (default **true**):
+
 ```c
-// EFA provider fi_send implementation
+// EFA provider fi_send implementation (conceptual)
 static ssize_t efa_msg_send(struct fid_ep *ep, const void *buf,
                             size_t len, void *desc, fi_addr_t dest_addr,
                             void *context) {
   struct efa_ep *efa_ep = container_of(ep, struct efa_ep, ep_fid);
 
-  // Prepare send work request
+  if (efa_env.use_data_path_direct) {
+    // DEFAULT: build the WQE ourselves and post straight to the mapped SQ.
+    // No libibverbs call — see efa_data_path_direct_post_send().
+    return efa_data_path_direct_post_send(efa_ep->qp, ...);
+  }
+
+  // FALLBACK: hand a WQE to rdma-core via libibverbs.
   struct ibv_send_wr wr = {
     .wr_id = (uintptr_t)context,
-    .sg_list = &sge,
-    .num_sge = 1,
-    .opcode = IBV_WR_SEND,
+    .sg_list = &sge, .num_sge = 1, .opcode = IBV_WR_SEND,
   };
-
-  // Post to rdma-core verbs
-  ret = ibv_post_send(efa_ep->qp->ibv_qp, &wr, &bad_wr);
-
-  return ret ? -errno : 0;
+  return ibv_post_send(efa_ep->qp->ibv_qp, &wr, &bad_wr);
 }
 ```
 
@@ -270,16 +290,80 @@ static ssize_t efa_msg_send(struct fid_ep *ep, const void *buf,
 - Validate endpoint and parameters
 - Prepare EFA-specific headers (SRD addressing)
 - Build scatter-gather list from buffer descriptors
-- Call rdma-core `ibv_post_send()` with work request
+- **Default (dp-direct)**: build the tx WQE on the stack and write it into the
+  mapped SQ, then ring the doorbell via MMIO (see next step)
+- **Fallback**: call rdma-core `ibv_post_send()` with the work request
 
 **Key Files**:
 - [prov/efa/src/efa_msg.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_msg.c) - EFA send/recv operations
 - [prov/efa/src/efa_rma.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_rma.c) - EFA RDMA write operations
-- [prov/efa/src/efa_verbs.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_verbs.c) - Verbs integration
+- [prov/efa/src/efa_data_path_direct.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_data_path_direct.c) - dp-direct QP setup (maps SQ/RQ/CQ, doorbells, WQE entry size, 64-bit req-id)
+- [prov/efa/src/efa_data_path_direct_entry.h](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_data_path_direct_entry.h) - inline WQE post + CQE poll fast path
 
 - **Timing**: ~500-1000 ns
 
-#### 7. rdma-core (libibverbs)
+#### 7. EFA Provider Data-Path-Direct (DEFAULT)
+
+Since the EFA provider defaults to `FI_EFA_USE_DATA_PATH_DIRECT=true`
+([efa_env.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_env.c),
+`.use_data_path_direct = true`), the send fast path **bypasses rdma-core
+entirely**. The provider builds the WQE and writes it into the memory-mapped
+send queue itself.
+
+**Post send** ([efa_data_path_direct_entry.h](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_data_path_direct_entry.h) - `efa_data_path_direct_post_send`):
+
+```c
+// Build the WQE on the stack, then copy into the mapped SQ slot.
+// struct efa_io_tx_wqe_128 supports the EFA driver r3.3.0 128-byte
+// wide-WQE format (falls back to 64-byte WQEs on older devices).
+struct efa_io_tx_wqe_128 local_wqe = {0};
+struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
+
+efa_post_send_validate(qp);
+if (!sq->num_wqe_pending)
+    mmio_wc_start();                 // write-combining barrier
+
+efa_data_path_direct_set_ud_addr(meta_desc, ah, qpn, qkey);
+efa_set_sq_comp_wrid(meta_desc, &sq->wq, wr_id);   // 64-bit req-id capable
+efa_set_common_ctrl_flags(meta_desc, sq, EFA_IO_SEND);
+efa_data_path_direct_set_sgl(local_wqe.data.sgl, meta_desc, sge_list, iov_count);
+
+efa_data_path_direct_send_wr_post(qp, sq, &local_wqe);  // copy WQE into mapped SQ
+efa_sq_advance_post_idx(sq);
+sq->num_wqe_pending++;
+
+if (!(flags & FI_MORE))
+    efa_data_path_direct_send_wr_ring_db(sq);  // MMIO doorbell write
+```
+
+**Ring doorbell** ([efa_data_path_direct_internal.h](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_data_path_direct_internal.h) - `efa_sq_ring_doorbell`):
+
+```c
+EFA_ALWAYS_INLINE void efa_sq_ring_doorbell(struct efa_data_path_direct_sq *sq,
+                                            uint32_t pc) {
+    udma_to_device_barrier();   // ensure WQE bytes are visible to the device
+    mmio_write32(sq->wq.db, pc); // MMIO write to the hardware doorbell register
+}
+```
+
+**Direct WQE mechanics** (verified in `efa_data_path_direct.c` / `_internal.h`):
+- The QP setup maps the SQ, RQ and CQ buffers and records the hardware doorbell
+  addresses (`sq.wq.db`, `rq.wq.db`, and the CQ doorbell when
+  `HAVE_EFADV_CQ_ATTR_DB`). WQE size is read from the device (`sq_attr.entry_size`)
+  and is **64 or 128 bytes** — the EFA driver **r3.3.0** exposes 128-byte
+  ("wide") SQ WQEs (`efa_device_support_wide_wqe`).
+- **64-bit work request IDs**: when the device advertises
+  `EFADV_WQ_CAPS_64_BIT_REQ_ID` and `FI_EFA_USE_SQ_REQ_ID_64_BIT` is enabled
+  (default on — `.use_sq_req_id_64_bit = 1` in `efa_env.c`), completions carry a
+  64-bit req-id (`efa_cqe_is_64_bit_comp`), removing the old 16-bit req-id table
+  indirection.
+- WQEs are batched: the provider only rings the doorbell when `FI_MORE` is
+  clear or the batch reaches `sq->wq.max_batch`, amortizing the MMIO cost.
+
+- **Timing**: ~80-150 ns (stack WQE build + copy to mapped SQ + doorbell; no
+  libibverbs call overhead)
+
+#### 7b. rdma-core (libibverbs) — FALLBACK PATH ONLY
 
 **Verbs API** ([rdma-core/libibverbs/verbs.h](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h)):
 
@@ -322,18 +406,22 @@ static int efa_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 }
 ```
 
-**rdma-core Actions**:
+**rdma-core Actions** (fallback path — same mechanics as dp-direct, one extra call layer):
 - Write work queue entry (WQE) to memory-mapped send queue buffer
 - Ring doorbell register (MMIO write to notify EFA hardware)
 - **Zero syscalls** - entirely userspace operation
 - No kernel involvement in fast path
+- Note: with dp-direct (default) the EFA provider does this WQE-write + doorbell
+  itself (Step 7 above); this `efa_post_send()` inside rdma-core is only reached
+  when `FI_EFA_USE_DATA_PATH_DIRECT=0`.
 
 **Key Functions**:
 - `ibv_post_send()` - Post send work request ([libibverbs/verbs.h](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h))
 - `efa_post_send()` - EFA implementation ([providers/efa/verbs.c](https://github.com/linux-rdma/rdma-core/blob/master/providers/efa/verbs.c))
 - `mmio_write32()` - Doorbell ring to hardware
 
-- **Timing**: ~100-200 ns (memory writes + doorbell)
+- **Timing**: ~100-200 ns (memory writes + doorbell). dp-direct shaves the
+  libibverbs call/indirection off this (~80-150 ns effective).
 
 #### 8. EFA Driver
 
@@ -368,9 +456,41 @@ static int efa_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 - DMAs data to registered memory buffer
 - Writes completion queue entry (CQE) to memory-mapped CQ
 
-**rdma-core** ([rdma-core/providers/efa/verbs.c](https://github.com/linux-rdma/rdma-core/blob/master/providers/efa/verbs.c)):
+**EFA Provider — data-path-direct CQ poll (DEFAULT)** ([efa_data_path_direct_entry.h](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_data_path_direct_entry.h)):
+
+With dp-direct enabled (the default), `efa_cq_read()` polls the mapped CQ buffer
+directly instead of calling `ibv_poll_cq()`. The provider reads the next device
+CQE, validates its generation/req-id, and extracts the completion fields inline:
+
 ```c
-// Poll completion queue
+// efa_data_path_direct_start_poll(): read next CQE straight from mapped CQ
+data_path_direct->cur_cqe =
+    efa_data_path_direct_next_device_cqe_get(data_path_direct);
+if (!data_path_direct->cur_cqe)
+    return ENOENT;                       // no completion available
+
+// Look up the QP; accept if it's a 64-bit-req-id SQ completion or the
+// wrid generation matches (guards against stale/recycled CQEs).
+qpn = data_path_direct->cur_cqe->qp_num;
+// ... efa_cqe_is_64_bit_comp() / efa_data_path_direct_is_valid_wrid_qp_gen() ...
+
+// Field accessors read directly from the mapped CQE:
+//   efa_data_path_direct_wc_read_byte_len(), _read_opcode(),
+//   _read_src_qp(), _read_imm_data(), _read_vendor_err(), ...
+```
+
+CQ completion draining also uses an MMIO doorbell to advance the consumer index
+(`efa_update_cq_doorbell` → `mmio_write32(cq->db, ...)`) when
+`HAVE_EFADV_CQ_ATTR_DB` is available. No libibverbs `ibv_poll_cq` call is made on
+this path.
+
+**rdma-core — FALLBACK ONLY** ([rdma-core/providers/efa/verbs.c](https://github.com/linux-rdma/rdma-core/blob/master/providers/efa/verbs.c)):
+
+When dp-direct is disabled, `efa_cq_read()` falls back to `ibv_poll_cq()`, which
+itself reads the same mapped CQ buffer but through the libibverbs call layer:
+
+```c
+// Poll completion queue (fallback path)
 int ibv_poll_cq(struct ibv_cq *cq, int num_entries, struct ibv_wc *wc) {
   struct efa_cq *efa_cq = to_efa_cq(cq);
 
@@ -399,8 +519,9 @@ int ibv_poll_cq(struct ibv_cq *cq, int num_entries, struct ibv_wc *wc) {
 ssize_t efa_cq_read(struct fid_cq *cq_fid, void *buf, size_t count) {
   struct efa_cq *cq = container_of(cq_fid, struct efa_cq, cq_fid);
 
-  // Poll ibv_cq
-  ret = ibv_poll_cq(cq->ibv_cq, count, wc);
+  // DEFAULT: poll the mapped CQ directly (efa_data_path_direct_start_poll/next).
+  // FALLBACK: ibv_poll_cq() when use_data_path_direct is false.
+  ret = /* dp-direct poll or */ ibv_poll_cq(cq->ibv_cq, count, wc);
 
   // Translate to libfabric completion format
   for (i = 0; i < ret; i++) {
@@ -544,7 +665,9 @@ On regMr():
 **Tuning:**
 ```bash
 # Cache size (default: unlimited)
-NCCL_REGISTRATION_CACHE_SIZE=unlimited
+# There is no NCCL_REGISTRATION_CACHE_SIZE variable. Provider-level MR cache bounds:
+FI_EFA_MR_MAX_CACHED_SIZE=<bytes>    # total cached registration bytes
+FI_EFA_MR_MAX_CACHED_COUNT=<n>       # number of cached registrations
 ```
 
 ## Protocol Deep Dive
@@ -896,16 +1019,16 @@ Understanding libfabric EFA provider specifics to optimize this data path furthe
 - `ncclNet->iflush()` - Flush operation for GPUDirect
 
 **libfabric (OFI)** - Referenced but not linked (standard libfabric API):
-- `fi_send()` - Send message ([fi_msg.h](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h))
+- `fi_send()` - Send message ([fi_endpoint.h:326](https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_endpoint.h))
 - `fi_recv()` - Receive message
 - `fi_write()` - RDMA write
-- `fi_mr_reg()` - Register memory region ([fi_domain.h:413](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413))
-- `fi_cq_read()` - Read completion queue ([fi_eq.h](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h))
+- `fi_mr_reg()` - Register memory region ([fi_domain.h, ~line 413](https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_domain.h))
+- `fi_cq_read()` - Read completion queue ([fi_eq.h](https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h))
 
 **rdma-core (libibverbs)** - Referenced but not linked (standard RDMA API):
-- `ibv_post_send()` - Post send work request ([verbs.h:2554](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2554))
-- `ibv_post_recv()` - Post receive work request ([verbs.h:2562](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2562))
-- `ibv_poll_cq()` - Poll completion queue ([verbs.h:2576](https://github.com/linux-rdma/rdma-core/blob/6e9643e/libibverbs/verbs.h#L2576))
+- `ibv_post_send()` - Post send work request ([verbs.h, ~line 2554](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h))
+- `ibv_post_recv()` - Post receive work request ([verbs.h, ~line 2562](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h))
+- `ibv_poll_cq()` - Poll completion queue ([verbs.h, ~line 2576](https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/verbs.h))
 
 ### Structures
 
@@ -940,6 +1063,8 @@ Understanding libfabric EFA provider specifics to optimize this data path furthe
 **OFI Plugin Environment Variables**:
 - `OFI_NCCL_CUDA_FLUSH_ENABLE` - Enable CUDA GPUDirect flush
 - `FI_EFA_USE_DEVICE_RDMA` - Enable native RDMA on EFA Gen3+
+- `FI_EFA_USE_DATA_PATH_DIRECT` - EFA provider builds/posts WQEs and polls CQEs itself, bypassing rdma-core on the data path (**default: true**; verified in `efa_env.c`). Set to `0` to force the libibverbs fallback.
+- `FI_EFA_USE_SQ_REQ_ID_64_BIT` - Use 64-bit SQ work-request IDs when the device supports it (**default: on**; requires `EFADV_WQ_CAPS_64_BIT_REQ_ID`, EFA driver r3.3.0+).
 
 ### Total Code References
 - **6 NCCL functions** (external NVIDIA)

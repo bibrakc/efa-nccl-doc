@@ -49,21 +49,31 @@
 
 **Problem**: CUDA evolves rapidly, adding new APIs across versions:
 - **CUDA 11.0**: GPUDirect flush support
+- **CUDA 11.3–11.8**: `cudaGetDriverEntryPoint` **3-argument** variant (no `driverStatus`
+  out-param). Build support for CUDA 11.3–11.8 was restored in commit `aab6529`.
 - **CUDA 11.7**: DMA-BUF export support
-- **CUDA 12.0**: Legacy entry point (`cudaGetDriverEntryPoint`)
+- **CUDA 12.0**: Legacy entry point (`cudaGetDriverEntryPoint`, 4-argument with `driverStatus`)
 - **CUDA 13.0**: Versioned entry point (`cudaGetDriverEntryPointByVersion`)
 
-The OFI plugin must work with **all CUDA versions** without recompilation.
+The OFI plugin must work with **all these CUDA versions** without recompilation. Because the
+runtime signature of `cudaGetDriverEntryPoint` differs between CUDA 11.3–11.8 (3 args) and
+CUDA 12 (4 args), the plugin keeps **three** runtime entry-point function pointers and tries
+them in order (see below).
 
 ### Solution: Dynamic Function Resolution
 
-**Function Pointers** ([nccl_ofi_cuda.cpp:20-24](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_cuda.cpp)):
+**Function Pointers** ([nccl_ofi_cuda.cpp, ~lines 20–35](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_cuda.cpp)):
 
 ```cpp
-// Function pointers for version-agnostic calls
-static cudaError_t (*pfn_cudaRuntimeGetVersion)(int *runtimeVersion) = NULL;
-static cudaError_t (*pfn_cudaGetDriverEntryPointByVersion)(...) = NULL;  // CUDA 13+
-static cudaError_t (*pfn_cudaGetDriverEntryPoint)(...) = NULL;          // CUDA 12
+// CUDA Runtime function pointers - only for functions without driver equivalents.
+// driverStatus is declared as void* rather than
+// enum cudaDriverEntryPointQueryResult* because that enum only exists in CUDA 12+.
+static cudaError_t (*pfn_cudaGetDriverEntryPointByVersion)(const char *symbol, void **funcPtr,
+        unsigned int cudaVersion, unsigned long long flags, void *driverStatus) = NULL;  // CUDA 13+
+static cudaError_t (*pfn_cudaGetDriverEntryPoint)(const char *symbol, void **funcPtr,
+        unsigned long long flags, void *driverStatus) = NULL;                            // CUDA 12
+static cudaError_t (*pfn_cudaGetDriverEntryPoint_v11030)(const char *symbol, void **funcPtr,
+        unsigned long long flags) = NULL;   // CUDA 11.3 - 11.8 (3-argument variant, no driverStatus)
 ```
 
 **`DECLARE_CUDA_FUNCTION` macro** ([nccl_ofi_cuda.cpp:40](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_cuda.cpp)):
@@ -71,10 +81,15 @@ static cudaError_t (*pfn_cudaGetDriverEntryPoint)(...) = NULL;          // CUDA 
 ```cpp
 // Driver API function pointers (version-stable!)
 DECLARE_CUDA_FUNCTION(cuDriverGetVersion, 2020);
+DECLARE_CUDA_FUNCTION(cuCtxGetDevice, 2000);
+DECLARE_CUDA_FUNCTION(cuCtxSetCurrent, 4000);   // bind calling thread to a context
+DECLARE_CUDA_FUNCTION(cuCtxGetCurrent, 4000);
+DECLARE_CUDA_FUNCTION(cuDeviceGetAttribute, 2000);
 DECLARE_CUDA_FUNCTION(cuMemAlloc, 3020);
 DECLARE_CUDA_FUNCTION(cuMemFree, 3020);
-DECLARE_CUDA_FUNCTION(cuMemcpy, 4000);
 DECLARE_CUDA_FUNCTION(cuPointerGetAttributes, 7000);
+// CUDA graph-capture safety: temporarily disable capture around alloc/free/copy
+DECLARE_CUDA_FUNCTION(cuThreadExchangeStreamCaptureMode, 10010);
 #if HAVE_CUDA_GDRFLUSH_SUPPORT
 DECLARE_CUDA_FUNCTION(cuFlushGPUDirectRDMAWrites, 11030);  // CUDA 11.3+
 #endif
@@ -151,36 +166,41 @@ int nccl_net_ofi_gpu_init(void)
 
 ### Function Resolution Macro
 
-**`RESOLVE_CUDA_FUNCTION` macro** ([nccl_ofi_cuda.cpp:43-65](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_cuda.cpp)):
+**`RESOLVE_CUDA_FUNCTION` macro** ([nccl_ofi_cuda.cpp, ~lines 55–75](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_cuda.cpp)):
 
 ```cpp
 #define RESOLVE_CUDA_FUNCTION(function, version) do {                          \
-    enum cudaDriverEntryPointQueryResult result = cudaDriverEntryPointSymbolNotFound; \
     cudaError_t err = cudaErrorUnknown;                                        \
     bool resolved = false;                                                     \
-    /* Try versioned entry point first (CUDA 13+ preferred) */                \
+    /* 1. CUDA 13+ versioned entry point (preferred) */                        \
     if (pfn_cudaGetDriverEntryPointByVersion != NULL) {                        \
-        err = pfn_cudaGetDriverEntryPointByVersion(#function,                 \
-                   (void **)&pfn_##function, version,                         \
-                   cudaEnableDefault, &result);                               \
-        if (err == cudaSuccess && pfn_##function != NULL) {                   \
-            resolved = true;                                                   \
-        }                                                                      \
+        err = pfn_cudaGetDriverEntryPointByVersion(#function,                  \
+                   (void **)&pfn_##function, version, cudaEnableDefault, NULL);\
+        if (err == cudaSuccess && pfn_##function != NULL) resolved = true;     \
     }                                                                          \
-    /* Fallback to legacy entry point for CUDA 12 compatibility */            \
-    if (!resolved && pfn_cudaGetDriverEntryPoint != NULL) {                   \
-        err = pfn_cudaGetDriverEntryPoint(#function,                          \
-                   (void **)&pfn_##function, cudaEnableDefault, &result);     \
-        if (err == cudaSuccess && pfn_##function != NULL) {                   \
-            resolved = true;                                                   \
-        }                                                                      \
+    /* 2. CUDA 12 legacy entry point (4-arg, with driverStatus) */            \
+    if (!resolved && pfn_cudaGetDriverEntryPoint != NULL) {                    \
+        err = pfn_cudaGetDriverEntryPoint(#function,                           \
+                   (void **)&pfn_##function, cudaEnableDefault, NULL);         \
+        if (err == cudaSuccess && pfn_##function != NULL) resolved = true;     \
+    }                                                                          \
+    /* 3. CUDA 11.3-11.8 entry point (3-arg, no driverStatus) */              \
+    if (!resolved && pfn_cudaGetDriverEntryPoint_v11030 != NULL) {             \
+        err = pfn_cudaGetDriverEntryPoint_v11030(#function,                    \
+                   (void **)&pfn_##function, cudaEnableDefault);               \
+        if (err == cudaSuccess && pfn_##function != NULL) resolved = true;     \
     }                                                                          \
     if (!resolved) {                                                           \
-        NCCL_OFI_WARN("Failed to resolve CUDA function %s", #function);       \
+        NCCL_OFI_WARN("Failed to resolve CUDA function %s", #function);        \
         return -ENOTSUP;                                                       \
     }                                                                          \
 } while (0);
 ```
+
+The third branch is what restores CUDA 11.3–11.8 support (commit `aab6529`): those runtimes
+export `cudaGetDriverEntryPoint` with a 3-argument signature (no `driverStatus`), which is a
+different ABI from the CUDA 12 4-argument form and would otherwise fault if called with the
+wrong prototype.
 
 **Key Benefits**:
 1. **No recompilation needed** for new CUDA versions
@@ -213,7 +233,9 @@ cudaMalloc(&ptr, size)  →  cuMemAlloc(&d_ptr, size)
 cudaFree(ptr)  →  cuMemFree(d_ptr)
 
 // Memory copy
-cudaMemcpy(dst, src, size, kind)  →  cuMemcpy(dst, src, size)
+cudaMemcpy(dst, src, size, kind)  →  cuMemcpyHtoDAsync(dst, src, size, sideStream)
+                                     (on a dedicated non-blocking side stream, then
+                                      cuStreamSynchronize; see CUDA graph-capture section)
 
 // Pointer attributes
 cudaPointerGetAttributes(&attrs, ptr)  →  cuPointerGetAttributes(num_attrs, attrs, data, ptr)
@@ -587,6 +609,128 @@ if (ret != 0) {
 }
 ```
 
+## CUDA Graph Capture Interaction (gotcha)
+
+**Problem**: `cuMemAlloc`/`cuMemFree` and a synchronous `cuMemcpy` are **not legal inside an
+active CUDA graph stream capture**. If the plugin performs a GPU memory op (e.g. allocating or
+freeing a bounce/scratch buffer, or copying a signal) while the application's thread has a
+stream capture in progress, the operation fails and the capture is invalidated. This was a
+real, observed bug — fixed in commit `9013fa8` (*"rdma: fix GPU memory ops failing during CUDA
+graph capture"*).
+
+**Fix**: the plugin's GPU memory helpers now **temporarily disable stream capture** on the
+calling thread around the operation using `cuThreadExchangeStreamCaptureMode`, and restore the
+previous mode afterward. Copies additionally run on a **dedicated non-blocking side stream**
+so they never join the captured default stream. See
+[nccl_ofi_cuda.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_cuda.cpp)
+(`nccl_net_ofi_gpu_mem_alloc`, `nccl_net_ofi_gpu_mem_free`,
+`nccl_net_ofi_gpu_mem_copy_host_to_device`):
+
+```cpp
+int nccl_net_ofi_gpu_mem_alloc(void **ptr, size_t size)
+{
+    CUdeviceptr d_ptr;
+    // Swap the calling thread into RELAXED capture mode so cuMemAlloc is allowed
+    // even if the app has a capture in progress; restore the prior mode after.
+    CUstreamCaptureMode mode = CU_STREAM_CAPTURE_MODE_RELAXED;
+    pfn_cuThreadExchangeStreamCaptureMode(&mode);      // disable/relax capture
+    CUresult ret = pfn_cuMemAlloc(&d_ptr, size);
+    pfn_cuThreadExchangeStreamCaptureMode(&mode);      // restore prior mode
+    ...
+}
+
+int nccl_net_ofi_gpu_mem_copy_host_to_device(void *dst, void *src, size_t size)
+{
+    CUstreamCaptureMode mode = CU_STREAM_CAPTURE_MODE_RELAXED;
+    pfn_cuThreadExchangeStreamCaptureMode(&mode);
+    // Use a NON-BLOCKING side stream so as not to interfere with any
+    // graph capture on the legacy default stream.
+    pfn_cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING);
+    pfn_cuMemcpyHtoDAsync((CUdeviceptr)dst, src, size, stream);
+    pfn_cuStreamSynchronize(stream);
+    pfn_cuStreamDestroy(stream);
+    pfn_cuThreadExchangeStreamCaptureMode(&mode);      // restore
+}
+```
+
+**Takeaway for callers**: memory registration / device copies through the plugin are safe to
+call from a thread that is capturing a CUDA graph; the plugin isolates them from the capture.
+
+## `nccl_ofi_device_copy.h`: the device-copy abstraction
+
+`include/nccl_ofi_device_copy.h` (new) defines an abstract
+[`nccl_ofi_device_copy`](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_device_copy.h)
+interface that decouples the rest of the plugin from *how* host↔device copies are performed.
+GDRCopy is one concrete implementation (`nccl_ofi_gdrcopy_ctx`). The interface is:
+
+- `register_region(device_ptr, size, out_handle)` — register a device region for copies, returns an opaque `RegHandle`.
+- `copy_to_device(host_ptr, handle, offset, size)` — host → device.
+- `copy_from_device(handle, offset, host_ptr, size)` — device → host.
+- `forced_pcie_copy()` — true if the implementation forces the PCIe path (relevant on C2C
+  systems such as Grace Hopper, where the GDRCopy v2 `GDR_PIN_FLAG_FORCE_PCIE` path is used).
+- `deregister_region(handle)`.
+
+The GIN path requires an implementation whose `forced_pcie_copy()` is true (GDRCopy 2.5+),
+which is why the GIN proxy signal path insists on GDRCopy 2.5+ (see
+[gin-alltoall-libfabric-trace.md](gin-alltoall-libfabric-trace.md)). In **GDAKI** mode the
+GDRCopy registration is skipped entirely (commit `5b163ed`) because the device signals the
+target through EFA hardware counters instead of a CPU-mapped copy.
+
+## New CUDA helpers: bind a thread's GPU, inspect allocations
+
+Commit `6014cd9` added helpers to
+[nccl_ofi_cuda.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_cuda.cpp) to
+bind a thread's GPU/context and inspect allocations, all via the **CUDA driver API**:
+
+- `nccl_net_ofi_gpu_set_current_context(CUcontext)` / `nccl_net_ofi_gpu_get_current_context(CUcontext*)`
+  — thin wrappers over `cuCtxSetCurrent` / `cuCtxGetCurrent`; they manage which context the
+  calling thread is bound to and take **no ownership** of it. These matter for worker threads
+  (e.g. the per-process gdrcopy worker) that must run on the right GPU context.
+- Allocation-inspection helpers built on `cuPointerGetAttributes` /
+  `cuMemGetAllocationGranularity` / `cuMemGetAllocationPropertiesFromHandle` /
+  `cuMemRetainAllocationHandle` to determine device ordinal, memory type, and allocation
+  properties for a pointer.
+
+## EFA-GDA (GDAKI) CUDA dependency and build requirements
+
+The GDAKI (kernel-initiated) GIN device path depends on the **vendored EFA-GDA CUDA sources**
+at `3rd-party/efa-gda` (the *efa-dp-direct* project, pinned at `81c4dc7`). These sources
+provide the GPU-side EFA datapath: posting work requests from GPU kernels and GPU-side
+completion polling. They were vendored and wired into the build across commits `27920ab`
+(vendor efa-dp-direct at `3rd-party/efa-gda`), `4735ddd`, `1383e93`, `38febcc`, `2fee64f`,
+`e8f6174`, `0c7eb41`.
+
+**Build requirement (hard):** `configure.ac` now **fails configuration** if the vendored CUDA
+sources are missing:
+
+```m4
+AC_MSG_CHECKING([for required efa-dp-direct CUDA sources])
+AS_IF([test -f "$srcdir/3rd-party/efa-gda/CUDA/README.md"],
+      [AC_MSG_RESULT([yes])],
+      [AC_MSG_RESULT([no])
+       AC_MSG_ERROR([Missing required file:
+  3rd-party/efa-gda/CUDA/README.md
+3rd-party/efa-gda is vendored directly in this repository and is not a Git
+submodule. ...])])
+```
+
+Notes:
+- `3rd-party/efa-gda` is **vendored directly**, not a Git submodule — a missing file means the
+  tree is incomplete; re-checkout or build from a release tarball.
+- `nvcc` is optional and only used to build the GDAKI GPU functional test.
+- GDAKI is compiled in as `HAVE_GDAKI`; at runtime it also requires libfabric ≥ 2.5, DMA-BUF
+  viable, and an EFA provider (see `nccl_ofi_gin_gdaki_capable()`).
+
+### EFA-GDA glue moved to the CUDA driver API
+
+The EFA-GDA glue was migrated from **CUDA runtime API** calls to **CUDA driver API** calls
+(commit `62b63cc`, *"efa-gda: Translate cuda runtime function calls to cuda driver function
+calls"*), and the GIN gdrcopy context is now bound via the **CUDA driver API** (commit
+`6eb9a96`, *"cuda: Bind the GIN gdrcopy context via the CUDA driver API"*). This is consistent
+with the rest of the plugin's preference for the version-stable driver API. Related dynamic
+`cudart` / `CUDA_RUNTIME_LIB` handling changes: commits `323668e`, `e31de68`, `ee25228`,
+`fa8d688`, `2cc20bb`.
+
 ## Performance Characteristics
 
 | Operation | Latency | Notes |
@@ -804,4 +948,4 @@ Referenced but not linked (GDRCopy library API):
 - **4 CUDA Runtime API functions** (external NVIDIA)
 - **5 GDRCopy API functions** (external NVIDIA)
 
-All aws-ofi-nccl references link to commit `75240c8` in the [aws/aws-ofi-nccl](https://github.com/aws/aws-ofi-nccl) repository.
+All aws-ofi-nccl references use branch-form links into [aws/aws-ofi-nccl](https://github.com/aws/aws-ofi-nccl/blob/master/) (`master`). Content in this document was verified against aws-ofi-nccl master `d840aa1` (tag v1.21.1). NVIDIA driver / open-gpu-kernel-modules details reflect release **610.57.04**.

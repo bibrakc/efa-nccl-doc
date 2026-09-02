@@ -20,7 +20,12 @@ The **Ring algorithm** is NCCL's bandwidth-optimal algorithm for collective oper
 - Data movement: Each GPU sends and receives (N-1)/N of the total data
 - Scalability: Bandwidth-optimal but latency limits scaling to hundreds of GPUs
 
-**Source**: [NCCL source: src/graph/rings.cc](https://github.com/NVIDIA/nccl)
+**Source**: Ring ordering is built per channel by `ncclBuildRings()` in
+[nccl/src/graph/rings.cc](https://github.com/NVIDIA/nccl/blob/master/src/graph/rings.cc)
+(the ring search itself is in [src/graph/search.cc](https://github.com/NVIDIA/nccl/blob/master/src/graph/search.cc)
+and [src/graph/connect.cc](https://github.com/NVIDIA/nccl/blob/master/src/graph/connect.cc));
+the device-side reduce-scatter/all-gather steps run in
+[src/device/all_reduce.h](https://github.com/NVIDIA/nccl/blob/master/src/device/all_reduce.h).
 
 ## Algorithm Description
 
@@ -373,18 +378,37 @@ T_ring = 2(N-1)*α + 2*β*N*S₀*(N-1)/N
 
 ### Chunk Granularity
 
-NCCL divides data into N chunks, but can further subdivide for finer pipelining:
+NCCL divides each channel's data into chunks and pipelines them; each chunk is further
+split into slices and steps. The relevant compile-time constants (from
+[nccl/src/include/collectives.h, lines 19-22](https://github.com/NVIDIA/nccl/blob/master/src/include/collectives.h),
+unchanged in 2.31) are:
 
 ```
-Number of chunks = N * nThreads * chunkSteps
-Chunk size = S / (N * nThreads * chunkSteps)
+NCCL_STEPS            = 8            (FIFO depth per channel, src/include/device.h line 26)
+ALLREDUCE_SLICESTEPS  = NCCL_STEPS/4 = 2
+ALLREDUCE_CHUNKSTEPS  = NCCL_STEPS/2 = 4
 ```
 
-Typical values:
-- nThreads: 8-16 (number of threads per GPU)
-- chunkSteps: 1-8 (pipeline depth)
+The ring AllReduce kernel (`runRing` in
+[src/device/all_reduce.h](https://github.com/NVIDIA/nccl/blob/master/src/device/all_reduce.h))
+instantiates the Simple protocol as
+`ProtoSimple<ALLREDUCE_CHUNKSTEPS/ALLREDUCE_SLICESTEPS, ALLREDUCE_SLICESTEPS>`
+(i.e. `SlicePerChunk = 2`, `StepPerSlice = 2`). It walks the buffer in units of
+`loopCount = nranks * chunkCount`, where `chunkCount` is computed per channel by
+`ncclCollCbdPart()`; the tail iteration re-aligns `chunkCount` to a 16-byte multiple.
+So the effective decomposition is:
 
-**Effect**: Smaller chunks reduce pipeline bubble but increase overhead.
+```
+Per-channel data → chunks (chunkCount elements each)
+Each chunk       → SlicePerChunk (=2) slices
+Each slice       → StepPerSlice (=2) FIFO steps, bounded by NCCL_STEPS = 8 in flight
+```
+
+**Effect**: Smaller chunks reduce the pipeline bubble but increase per-step overhead;
+the `NCCL_STEPS = 8` in-flight budget is the hard cap on how deeply a single channel can
+pipeline. Thread count per block is chosen by the tuner
+([src/tuning/tuning_general.cc](https://github.com/NVIDIA/nccl/blob/master/src/tuning/tuning_general.cc)),
+not fixed at 8-16.
 
 ### Pipeline Efficiency
 

@@ -2,11 +2,13 @@
 
 ## Overview
 
-The OFI (OpenFabrics Interfaces) NCCL plugin (`aws-ofi-nccl`) provides a network transport for NCCL using libfabric. It implements both NCCL's network plugin interface (up to `ncclNet_v12_t`) and the GIN plugin interface (up to `ncclGin_v13_t`), and is the primary way NCCL communicates over AWS EFA.
+The OFI (OpenFabrics Interfaces) NCCL plugin (`aws-ofi-nccl`) provides a network transport for NCCL using libfabric. It implements NCCL's network plugin interface (up to `ncclNet_v12_t`) and the GPU-initiated networking interfaces — GIN (up to `ncclGin_v14_t`, GDAKI-only) and RMA (up to `ncclRma_v15_t`) — and is the primary way NCCL communicates over AWS EFA.
 
 **Repository**: https://github.com/aws/aws-ofi-nccl
 
-The plugin is written in C++ and organized as a class hierarchy
+The plugin is written in **C++20** (mandatory since master `a615420`; `configure.ac`
+uses `AX_CXX_COMPILE_STDCXX([20], [noext], [mandatory])` with `-fno-rtti`) and organized
+as a class hierarchy
 (`plugin_t` → `device_t` → `domain_t` → `ep_t` → communicators) with
 `shared_ptr`/`weak_ptr` ownership for automatic resource management.
 It supports three transports: RDMA (P5+), SendRecv (P4d), and GIN
@@ -93,6 +95,54 @@ The OFI plugin supports different communication protocols based on instance capa
 The plugin implements the `ncclNet_v12_t` interface (newest), and also exports older interface versions down to `ncclNet_v4` so a given NCCL build links the highest version it supports.
 The API layer is in `src/nccl_ofi_api.cpp`, which dispatches to transport-specific
 implementations in `src/nccl_ofi_rdma.cpp` (RDMA) or `src/nccl_ofi_sendrecv.cpp` (SendRecv).
+
+### Exported plugin symbols
+
+NCCL discovers a plugin by dlopen-ing the shared object and looking up versioned
+symbols, binding the **highest version it supports**. Every export is tagged with the
+`NCCL_OFI_EXPORT_SYMBOL` macro. As of master `d840aa1` the plugin exports the following
+(verify with `grep -rn 'NCCL_OFI_EXPORT_SYMBOL' src`):
+
+| Symbol | Interface | Source file | Notes |
+|--------|-----------|-------------|-------|
+| `ncclNetPlugin_v6`..`ncclNetPlugin_v12` | `ncclNet_v*_t` | [src/nccl_ofi_interface_nvidia.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_interface_nvidia.cpp) | CUDA/ROCm build. `v12` is newest |
+| `ncclNetPlugin_v4`, `ncclNetPlugin_v5`, `ncclNetPlugin_v6` | `ncclNet_v*_t` | [src/nccl_ofi_interface_neuron.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_interface_neuron.cpp) | AWS Neuron build exports v4/v5/v6 |
+| `ncclGinPlugin_v11`, `ncclGinPlugin_v13` | `ncclGin_v*_t` | [src/rdma/gin/nccl_ofi_gin_api.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_api.cpp) | **proxy** GIN op tables |
+| `ncclGinPlugin_v14` | `ncclGin_v14_t` | [src/rdma/gin/nccl_ofi_gin_gdaki.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_gdaki.cpp) | **GDAKI-only** (kernel-initiated), `name = "Libfabric_GDAKI"` |
+| `ncclRmaPlugin_v14`, `ncclRmaPlugin_v15` | `ncclRma_v*_t` | [src/rdma/gin/nccl_ofi_gin_api.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_api.cpp) | **host / CPU-proxy** one-sided path |
+| `ncclTunerPlugin_v2`, `ncclTunerPlugin_v3`, `ncclTunerPlugin_v6` | `ncclTuner_v*_t` | [src/tuner/nccl_ofi_tuner.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/tuner/nccl_ofi_tuner.cpp) | cost-model tuner |
+
+> Note: earlier docs listed only `ncclNet_v12_t` and `ncclGin_v13_t`. The GPU-initiated
+> path is now split across three separate op-table families exported by the same shared
+> object.
+
+#### The `ncclGin_*` vs `ncclRma_*` split
+
+NCCL's GPU-initiated networking evolved into two distinct op-table shapes, and the
+plugin exports both so a given NCCL build binds the one it knows:
+
+- **`ncclGin_*` tables** carry the *device/kernel-facing* GIN interface. The proxy
+  tables (`ncclGinPlugin_v11`, `ncclGinPlugin_v13`) advertise
+  `netDeviceType = NCCL_NET_DEVICE_GIN_PROXY` and set `createContext = nullptr` for v11
+  (proxy needs no device handle); v13 adds `createContext`/`destroyContext`, `iget`,
+  and `iflush`. The **GDAKI** table `ncclGinPlugin_v14` (in `nccl_ofi_gin_gdaki.cpp`,
+  `name = "Libfabric_GDAKI"`) is the **GPU-initiated (kernel-initiated) path**: its
+  `createContext` builds a device-visible handle in GPU memory describing the SQ/CQ/RQ
+  so the kernel posts WQEs and polls CQEs itself. It is only compiled and exported when
+  `HAVE_GDAKI` is set.
+- **`ncclRma_*` tables** (`ncclRmaPlugin_v14`, `ncclRmaPlugin_v15`) carry the
+  **host / CPU-proxy** one-sided path. NCCL's GIN proxy binds these directly (via
+  `rma_v14.cc` on the NCCL side). They reuse the proxy GIN implementation under the
+  hood: e.g. `nccl_ofi_rma_createContext_v14` translates the RMA config into a
+  `ncclGinConfig_v13_t` and calls `nccl_ofi_gin_createContext_v13`; the RMA
+  `iputSignal` takes a trailing `isStrongSignal` flag that the plugin ignores (the
+  plugin's signals are always strong). See the "v14 moves the host data path to the RMA
+  op-table" comment in [nccl_ofi_gin_api.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_api.cpp).
+
+In short: **`ncclGin_v14_t` carries the GPU-initiated (GDAKI) path; the `ncclRma_v14/v15`
+tables carry the host/CPU-proxy path.** NCCL selects the highest version of each family
+that it supports; the choice between proxy and GDAKI at runtime is made NCCL-side (see
+the GIN Transport section and `doc/gin-getting-started.md`).
 
 ### Initialization
 
@@ -191,16 +241,16 @@ Inside the transport-specific `ep->listen()`, the following libfabric calls happ
 
 ```cpp
   // Create endpoint (if not already created for this thread)
-  fi_endpoint(domain, info, &ep, NULL);  // See fi_endpoint() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_endpoint.h#L182)
+  fi_endpoint(domain, info, &ep, NULL);  // See fi_endpoint() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_endpoint.h)
 
   // Bind to completion queue
-  fi_ep_bind(ep, cq, 0);  // See fi_ep_bind() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_endpoint.h#L203)
+  fi_ep_bind(ep, cq, 0);  // See fi_ep_bind() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_endpoint.h)
 
   // Enable endpoint
-  fi_enable(ep);  // See fi_enable() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_endpoint.h#L211)
+  fi_enable(ep);  // See fi_enable() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_endpoint.h)
 
   // Get local address
-  fi_getname(ep, &local_addr, &addrlen);  // See fi_getname() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_cm.h#L154)
+  fi_getname(ep, &local_addr, &addrlen);  // See fi_getname() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_cm.h)
 
   // Return address in handle (for sharing via NCCL bootstrap)
   memcpy(handle, &local_addr, addrlen);
@@ -252,7 +302,7 @@ Inside the transport-specific `ep->connect()`:
   memcpy(&remote_addr, handle, addrlen);
 
   // Insert remote address into address vector
-  fi_av_insert(av, &remote_addr, 1, ...);  // See fi_av_insert() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_cm.h#L206)
+  fi_av_insert(av, &remote_addr, 1, ...);  // See fi_av_insert() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_cm.h)
 
   // CM: send connect request message to peer
   // CM: wait for connect response (may return incomplete on first call)
@@ -318,15 +368,18 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
 Inside the transport-specific `regMr()`, the MR cache is consulted:
 
 ```cpp
+  // nccl_ofi_mr_cache is a C++ class; domain->mr_cache is a std::optional<nccl_ofi_mr_cache>
+  // guarded by the domain's mr_cache_lock. See mr-cache-implementation.md.
+
   // 1. Check cache (per-domain, sorted array by page-aligned address)
-  handle = nccl_ofi_mr_cache_lookup_entry(domain->mr_cache, &cache_key, endpoint_mr);
+  handle = domain->mr_cache->lookup_entry(cache_key, endpoint_mr);
   if (handle) return handle;  // Cache hit — refcount incremented
 
   // 2. Cache miss — register with libfabric
-  fi_mr_regattr(domain, &mr_attr, flags, &mr);  // See fi_mr_reg() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413)
+  fi_mr_regattr(domain, &mr_attr, flags, &mr);  // See fi_mr_reg() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_domain.h)
 
   // 3. Insert into cache
-  nccl_ofi_mr_cache_insert_entry(domain->mr_cache, &cache_key, endpoint_mr, handle);
+  domain->mr_cache->insert_entry(cache_key, endpoint_mr, handle);
 ```
 
 **Registration Cache** ([include/nccl_ofi_mr.h](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_mr.h)):
@@ -362,7 +415,7 @@ struct nccl_ofi_mr_ckey {
 };
 ```
 
-(See `struct fid_mr` ([include/rdma/fi_domain.h:131-138](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L131-L138)))
+(See `struct fid_mr` ([include/rdma/fi_domain.h:131-138](https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_domain.h)))
 
 **Cache Benefits:**
 - Avoid expensive re-registration
@@ -394,10 +447,10 @@ Inside the transport-specific `send()` (e.g., RDMA or SendRecv):
 
 ```cpp
   // Get memory descriptor for the registered region
-  void* desc = fi_mr_desc(mr);  // See fi_mr_desc() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L147)
+  void* desc = fi_mr_desc(mr);  // See fi_mr_desc() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_domain.h)
 
   // Post tagged send operation (tag identifies channel/operation)
-  ret = fi_tsend(ep, data, size, desc,  // See fi_tsend() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L121)
+  ret = fi_tsend(ep, data, size, desc,  // See fi_tsend() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_tagged.h)
                  remote_addr, tag, &context);
 
   if (ret == -FI_EAGAIN) {
@@ -434,7 +487,7 @@ Inside the transport-specific `recv()`:
     void* desc = fi_mr_desc(mr_handles[i]);
 
     // Pre-post tagged receives
-    ret = fi_trecv(ep, data[i], sizes[i], desc,  // See fi_trecv() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L98)
+    ret = fi_trecv(ep, data[i], sizes[i], desc,  // See fi_trecv() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_tagged.h)
                    FI_ADDR_UNSPEC, tags[i], 0, &context);
   }
 ```
@@ -485,8 +538,8 @@ ncclResult_t nccl_net_ofi_test(void* request, int* done, int* size)
   nccl_net_ofi_req *req = (nccl_net_ofi_req *)request;
 
   // Poll completion queue
-  struct fi_cq_data_entry cq_entry;  // See struct fi_cq_data_entry (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L215-L220)
-  ret = fi_cq_read(comm->cq, &cq_entry, 1);  // See fi_cq_read() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L311)
+  struct fi_cq_data_entry cq_entry;  // See struct fi_cq_data_entry (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
+  ret = fi_cq_read(comm->cq, &cq_entry, 1);  // See fi_cq_read() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
 
   if (ret > 0) {
     // Match completion to request
@@ -505,8 +558,8 @@ ncclResult_t nccl_net_ofi_test(void* request, int* done, int* size)
   }
 
   // Check for errors
-  struct fi_cq_err_entry err_entry;  // See struct fi_cq_err_entry (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L233-L246)
-  if (fi_cq_readerr(comm->cq, &err_entry, 0) > 0) {  // See fi_cq_readerr() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L348)
+  struct fi_cq_err_entry err_entry;  // See struct fi_cq_err_entry (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
+  if (fi_cq_readerr(comm->cq, &err_entry, 0) > 0) {  // See fi_cq_readerr() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
     // Handle error
     return ncclSystemError;
   }
@@ -532,7 +585,7 @@ ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 
   // Virtual dispatch to transport-specific deregMr
   // Decrements refcount in MR cache; if refcount reaches 0:
-  //   fi_close(&mr->fid)  // See fi_close() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L150)
+  //   fi_close(&mr->fid)  // See fi_close() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fabric.h)
   //   remove entry from cache
   switch (base_comm->type) {
     case NCCL_NET_OFI_SEND_COMM:
@@ -564,8 +617,6 @@ ncclResult_t nccl_net_ofi_closeSend(void *sComm)
   // send_comm destructor drops shared_ptr<ep>
   // → if last comm: ep destructor runs → domain destructor runs
   delete send_comm;
-}
-```
 
   return ncclSuccess;
 }
@@ -651,43 +702,89 @@ fi_mr_reg(domain, gpu_buf, size, access,
 - Libfabric compiled with CUDA support
 - Proper IOMMU configuration
 
-### Request Pipelining
+### Request Pipelining and the RDMA request class hierarchy
 
-The plugin maintains multiple outstanding requests:
+The plugin maintains many outstanding requests to hide latency and keep the network
+saturated. Request objects are pooled in a **freelist** rather than malloc'd per
+operation.
 
-```c
-#define MAX_REQUESTS 256
+**Refactor (master `f6f6223`, `960cb56`, `5b6d45f`, `1b5b830`, `8d2b9f0`, `cc7afb2`,
+`4942f12`, `aebf544`, `1b513c4`, `4b9a63c`, `d7b50ca`):** the RDMA request object was
+converted from a single base struct carrying a *union* of per-operation data structs
+into a **C++ class hierarchy**. `nccl_net_ofi_rdma_req` is now an abstract base
+(`class nccl_net_ofi_rdma_req : public nccl_net_ofi_req`, [include/nccl_ofi_rdma.h:396](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_rdma.h)) with
+pure-virtual `free()`, `post()`, `handle_completion()` and an overriding `test()`,
+plus concrete subclasses:
 
-struct req_pool {
-  struct nccl_ofi_req requests[MAX_REQUESTS];
-  int head, tail;
-};
+| Subclass | Purpose |
+|----------|---------|
+| `rdma_send_req` | application send (eager or rendezvous); carries eager fields |
+| `rdma_recv_req` | application receive |
+| `rdma_flush_req` | GDR flush (small `fi_read` ordering fence) |
+| `rdma_rma_op_req` | one-sided `fi_write`/`fi_read` (RMA/GIN) |
+| `rdma_rx_buff_req` | posted rx buffer, with `kind::EAGER` or `kind::CTRL` |
+| `rdma_eager_copy_req` | copy of an eager payload from the rx buffer to the app buffer |
+
+Per-type behaviour that used to switch on a `req_type` enum is now **virtual dispatch**:
+
+- `post()` — each subclass performs its own libfabric post (`fi_tsend`, `fi_write`,
+  `fi_read`, rx-buffer repost, …). `post_with_pending_retry()` wraps it and, on
+  `-FI_EAGAIN`, pushes the request onto the endpoint's pending queue for later retry.
+- `handle_completion(comp_flags, rail_id)` — the CQ dispatcher in `handle_cq_entry`
+  peels off the `FI_RECV` path (rx-buffer handling) and forwards every other completion
+  here; subclasses branch on `FI_SEND`/`FI_WRITE`/`FI_READ`. The base implementation
+  logs and returns `-EINVAL` (reached only on a programming error).
+- `free(dec_inflight_reqs)` — returns the object to its freelist.
+- `get_type()` is a **non-virtual** field read of a private `const req_type`, kept only
+  for logging/tracing (dispatch no longer uses it).
+
+**Placement-new allocation out of the freelist.** Allocation no longer memsets a union;
+it takes a freelist slot and constructs the concrete subclass in place, e.g.
+([src/nccl_ofi_rdma.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_rdma.cpp)):
+
+```cpp
+nccl_ofi_freelist::fl_entry *elem = r_comm->nccl_ofi_reqs_fl->entry_alloc();
+nccl_net_ofi_rdma_req *req = new (elem->ptr) rdma_eager_copy_req();   // placement new
+// ...
+req->~nccl_net_ofi_rdma_req();          // explicit virtual destructor call on free
+nccl_ofi_reqs_fl->entry_free(elem);     // slot returned to the freelist
 ```
 
-**Benefits:**
-- Hide latency via pipelining
-- Keep network saturated
-- Better throughput
+Because construction is per-allocation placement new, **destruction must be a matching
+explicit destructor call** before the block returns to the freelist (see the
+"Construction happens per-allocation via placement new" comment near
+[src/nccl_ofi_rdma.cpp:1604](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_rdma.cpp)).
+
+**Freelist sizing implication.** Every subclass shares one freelist per comm
+(`nccl_ofi_reqs_fl`), so each slot must be large enough for the **largest** subclass —
+the freelist element size is the max `sizeof` across the hierarchy, not a per-type size.
+Adding a large field to any one subclass grows every slot. rx-buffer requests use a
+separate freelist on the endpoint (`ep->rx_buff_reqs_fl`), and eager header buffers use
+their own `eager_hdr_fl`, so control/eager buffer pools are sized independently of the
+main request pool.
 
 ### Eager Protocol Optimization
 
-For small messages, the plugin can use eager send:
+For small messages, the RDMA transport *can* send the payload inline (eager) instead of
+doing the rendezvous control-message handshake. **Eager is now DISABLED BY DEFAULT.**
+`OFI_NCCL_EAGER_MAX_SIZE` (env `EAGER_MAX_SIZE`) defaults to **-1**, which disables the
+eager path entirely ([include/nccl_ofi_param.h:229](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_param.h),
+`OFI_NCCL_PARAM(int, eager_max_size, "EAGER_MAX_SIZE", -1)`). Set it to a positive byte
+count (e.g. 8192) to re-enable eager for messages at or below that size. See
+[ofi-plugin-protocols.md](ofi-plugin-protocols.md) for the full eager protocol
+(8-byte header, grouped-recv batch draining, wrap-safe `eager_seq`) and the history of
+the default flip.
+
+Conceptually, when enabled:
 
 ```c
-if (size < EAGER_THRESHOLD) {
-  // Send immediately, no pre-posted recv needed
-  fi_inject(ep, data, size, remote_addr);  // See fi_inject() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L133)
+if (size <= eager_max_size) {
+  // Eager: payload (prefixed by an 8-byte eager header) sent inline via
+  // fi_sendmsg(..., FI_REMOTE_CQ_DATA); no prior control message
 } else {
-  // Standard fi_send
-  fi_send(ep, data, size, desc, remote_addr, context);  // See fi_send() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L104)
+  // Rendezvous: control message, then fi_write
 }
 ```
-
-**fi_inject:**
-- Copies data to internal buffer
-- Returns immediately
-- No completion event
-- Limited to small sizes (< 4 KB on EFA)
 
 ## Libfabric API Usage
 
@@ -695,37 +792,37 @@ if (size < EAGER_THRESHOLD) {
 
 ```c
 // Initialization
-fi_getinfo()      // Query providers (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L315)
-fi_fabric()       // Create fabric (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L334)
-fi_domain()       // Create domain (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L409)
-fi_endpoint()     // Create endpoint (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_endpoint.h#L182)
-fi_cq_open()      // Create completion queue (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L363)
-fi_av_open()      // Create address vector (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_cm.h#L218)
+fi_getinfo()      // Query providers (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fabric.h)
+fi_fabric()       // Create fabric (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fabric.h)
+fi_domain()       // Create domain (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_domain.h)
+fi_endpoint()     // Create endpoint (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_endpoint.h)
+fi_cq_open()      // Create completion queue (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
+fi_av_open()      // Create address vector (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_cm.h)
 
 // Memory
-fi_mr_reg()       // Register memory (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L413)
-fi_mr_desc()      // Get descriptor (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L147)
+fi_mr_reg()       // Register memory (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_domain.h)
+fi_mr_desc()      // Get descriptor (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_domain.h)
 
 // Data transfer
-fi_send()         // Send message (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L104)
-fi_tsend()        // Tagged send (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L121)
-fi_recv()         // Receive message (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L67)
-fi_trecv()        // Tagged receive (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L98)
-fi_read()         // RDMA read (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_rma.h#L82)
-fi_write()        // RDMA write (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_rma.h#L111)
-fi_inject()       // Eager send (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_msg.h#L133)
+fi_send()         // Send message (fi_endpoint.h:326)
+fi_tsend()        // Tagged send (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_tagged.h)
+fi_recv()         // Receive message (fi_endpoint.h:306)
+fi_trecv()        // Tagged receive (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_tagged.h)
+fi_read()         // RDMA read (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_rma.h)
+fi_write()        // RDMA write (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_rma.h)
+fi_inject()       // Eager send (fi_endpoint.h:346)
 
 // Completion
-fi_cq_read()      // Poll completions (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L311)
-fi_cq_readerr()   // Read error (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L348)
+fi_cq_read()      // Poll completions (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
+fi_cq_readerr()   // Read error (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
 
 // Cleanup
-fi_close()        // Close resources (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L150)
+fi_close()        // Close resources (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fabric.h)
 ```
 
 ### Endpoint Configuration
 
-(See `struct fi_info` ([include/rdma/fabric.h:198-232](https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fabric.h#L198-L232)))
+(See `struct fi_info` ([include/rdma/fabric.h:198-232](https://github.com/ofiwg/libfabric/blob/main/include/rdma/fabric.h)))
 
 ```c
 struct fi_info hints = {
@@ -801,9 +898,12 @@ while (retry_count < MAX_RETRIES) {
 ### Environment Variables
 
 ```bash
-# Plugin-specific
-NCCL_OFI_USE_GDRCOPY=1           # Enable GDR copy
-NCCL_OFI_NCCL_VERSION_CHECK=0    # Disable version check
+# Plugin-specific (all plugin knobs use the OFI_NCCL_ prefix; see
+# include/nccl_ofi_param.h for the authoritative list and defaults)
+OFI_NCCL_PROTOCOL=RDMA           # per-platform default (RDMA on P5+ via
+                                 # platform-aws.cpp default_protocol);
+                                 # param.h fallback is SENDRECV
+OFI_NCCL_EAGER_MAX_SIZE=-1       # -1 (default) disables eager entirely
 
 # General NCCL + OFI
 FI_EFA_ENABLE_SHM_TRANSFER=0     # Disable SHM (use NCCL's SHM)
@@ -951,22 +1051,34 @@ operations, used by workloads like DeepEP for Mixture-of-Experts dispatch.
 - `include/rdma/gin/nccl_ofi_gin.h` — GIN listen/put comm classes
 - `include/rdma/gin/nccl_ofi_gin_resources.h` — GIN resources and ep_holder
 
-### GIN Plugin API (`ncclGin_v13_t`)
+### GIN Plugin API (`ncclGin_v13_t` proxy, `ncclGin_v14_t` GDAKI, `ncclRma_v14/v15_t` host proxy)
 
 The plugin implements these GIN functions
 ([3rd-party/nccl/cuda/include/nccl/gin_v13.h](https://github.com/aws/aws-ofi-nccl/blob/master/3rd-party/nccl/cuda/include/nccl/gin_v13.h)):
 
 | Function | Purpose | Source |
 |----------|---------|--------|
-| `init` | Initialize GIN support | `nccl_ofi_gin_api.cpp` |
-| `listen` | Create listening endpoint for bootstrap | `nccl_ofi_gin_api.cpp` |
-| `connect` | Bootstrap ring + create GIN resources | `nccl_ofi_gin.cpp` |
+| `init` | Initialize GIN support; reads `NCCL_GIN_PROXY_NTHREADS` | `nccl_ofi_gin_api.cpp` |
+| `listen` | Create listening endpoint for bootstrap; per-thread EP bucketing | `nccl_ofi_gin_api.cpp` |
+| `connect` | Bootstrap ring + create GIN resources | `nccl_ofi_gin_api.cpp` / `nccl_ofi_gin.cpp` |
+| `createContext` / `destroyContext` | Device/RMA context (proxy: v13+; GDAKI builds device handle) | `nccl_ofi_gin_api.cpp` / `nccl_ofi_gin_gdaki.cpp` |
 | `iput` | One-sided RDMA write to remote rank | `nccl_ofi_gin_reqs.cpp` |
 | `iputSignal` | RDMA write + atomic signal increment | `nccl_ofi_gin_reqs.cpp` |
+| `iget` / `iflush` | one-sided read / flush (v13+) | `nccl_ofi_gin_reqs.cpp` |
 | `ginProgress` | Progress outstanding operations | `nccl_ofi_gin_reqs.cpp` |
-| `regMrSym` | Register memory for symmetric access | `nccl_ofi_gin_resources.cpp` |
+| `regMrSym` / `regMrSymDmaBuf` | Register memory for symmetric access | `nccl_ofi_gin_resources.cpp` |
 | `test` | Test request completion | `nccl_ofi_gin_reqs.cpp` |
 | `closeColl` / `closeListen` | Cleanup | `nccl_ofi_gin_api.cpp` |
+
+**`NCCL_GIN_PROXY_NTHREADS` — per-thread endpoint bucketing (master `e6c4eb1`).**
+This is an **NCCL-side** environment variable read directly via `getenv()` in
+`nccl_ofi_gin_init` (it is *not* an `OFI_NCCL_*` plugin param). Default **1**, capped at
+`NCCL_GIN_MAX_CONNECTIONS`. NCCL calls `listen()` once per collComm; the plugin maps
+each connection to a progress thread with `listen_seq % nthreads` and folds the thread
+index into the endpoint key (`seq ^ (thread_idx << 32)`), so each GIN progress thread
+drives **its own endpoint/CQ** instead of contending on a shared completion queue. With
+`NCCL_GIN_PROXY_NTHREADS=1` all connections share one endpoint (legacy behaviour). See
+[src/rdma/gin/nccl_ofi_gin_api.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_api.cpp) (`listen()`, lines ~79 and ~150).
 
 ### GIN Connection Flow
 
@@ -1009,6 +1121,79 @@ The plugin implements these GIN functions
   nccl_ofi_rdma_gin_put_comm
     └── nccl_ofi_gin_resources&  (reference to resources on the endpoint)
 ```
+
+### GDAKI (EFA-GDA) build and runtime requirements
+
+GDAKI is the **GPU-initiated** GIN data path: the CUDA kernel drives the EFA send/completion/receive
+queues directly, with no CPU proxy on the data path.
+
+**Build-time (`HAVE_GDAKI`).** `configure.ac` enables GDAKI only when *all* of the
+following hold ([configure.ac](https://github.com/aws/aws-ofi-nccl/blob/master/configure.ac), ~line 354):
+
+- libfabric exposes `FI_EFA_GDA_OPS` (`ac_cv_have_decl_FI_EFA_GDA_OPS = yes`) — i.e. the
+  libfabric ≥ 2.5 GDA ops ABI is present;
+- the EFA hardware-completion-counter ABI is present (`have_fi_efa_comp_cntr = 1`);
+- the device interface is **CUDA** (`have_device_interface = cuda`).
+
+Otherwise the build is proxy-only GIN and `ncclGinPlugin_v14` is not exported. There is
+no `--enable-gdaki` flag; support is auto-detected. The GDAKI GPU functional test needs
+`nvcc`, but the plugin itself does not (it uses the **CUDA driver API**, moved from the
+CUDA Runtime API in master `6eb9a96`/`62b63cc`).
+
+**Vendored device sources.** The GDAKI device-side dependency is vendored under
+`3rd-party/efa-gda/` (EFA-GDA CUDA sources from `efa-dp-direct`, pinned at commit
+`81c4dc7`; commits `27920ab`, `4735ddd`, `1383e93`, `38febcc`, `68b016a`).
+`3rd-party/efa-gda` is committed directly into the repo (not a git submodule); the
+on-GPU queue layout is compatible with the `efa_cuda_qp`/`efa_cuda_cq` types the device
+code consumes. `configure.ac` fails early if `3rd-party/efa-gda/CUDA/README.md` is
+missing.
+
+**Runtime (`nccl_ofi_gin_gdaki_capable()`, [include/rdma/gin/nccl_ofi_gin_gdaki.h](https://github.com/aws/aws-ofi-nccl/blob/master/include/rdma/gin/nccl_ofi_gin_gdaki.h)).**
+GDAKI runs only if compiled in **and** the runtime satisfies:
+
+- runtime libfabric ≥ 2.5 (`FI_VERSION_GE(fi_version(), FI_VERSION(2,5))`),
+- DMA-BUF viable (`nccl_ofi_dmabuf_viable()`),
+- the provider name starts with `"efa"` (efa / efa-direct — the only family exposing GDA ops),
+- GDRCopy 2.5+ (forced PCIe copy) — checked in `nccl_ofi_gin_init`.
+
+On AWS, per `doc/gin-getting-started.md`, EFA-GDA additionally needs a P5en / P6-B200 /
+P6-B300 instance, libfabric 2.6.0+, rdma-core `64.0amzn0`+, EFA driver 3.3.0+, and the
+NVIDIA driver loaded with `PeerMappingOverride=1`. The hardware completion counter is
+gated by `OFI_NCCL_GDAKI_EFA_HW_COUNTER` (AUTO/ON/OFF; AUTO follows
+`PlatformAWS::config_gdaki_domain`). If a requested counter cannot be opened, GDAKI
+context creation **fails rather than silently falling back**.
+
+### Source tree layout
+
+The plugin's tree is organised into subdirectories (fix any older docs that referenced
+flat `src/nccl_ofi_tuner.cpp` / `src/nccl_ofi_gin*.cpp` paths):
+
+```
+src/cm/          Connection Manager
+src/rdma/gin/    GIN + GDAKI (moved out of flat src/)
+src/stats/       statistics, incl. histogram.cpp
+src/tuner/       cost-model tuner (nccl_ofi_tuner.cpp)
+include/{cm, internal, internal/tuner, ofi, rdma, rdma/gin, stats, tracing_impl, tuner}
+```
+
+Notable newer headers:
+
+- `include/nccl_ofi_device_copy.h` — GDRCopy/device-copy abstraction (`get_device_copy()`, forced-PCIe-copy check used by GIN)
+- `include/rdma/gin/nccl_ofi_gin_base.h` — shared GIN base types
+- `include/nccl_ofi_mpsc_ring.h`, `include/nccl_ofi_spsc_ring.h` — lock-free MPSC/SPSC ring buffers
+- `include/nccl_ofi_spinlock.h` — spinlock primitive
+- `include/nccl_ofi_tsa.h` — Clang thread-safety-analysis annotations (capability/guarded-by attributes)
+
+### Histogram statistics (`src/stats/histogram.cpp`)
+
+A histogram collection/printing API was added under `src/stats/` (master `6d46493`),
+guarded by a build-time toggle (`CHECK_ENABLE_HISTOGRAM` in `configure.ac`, controlling
+`histograms_enabled_cfg`). Key entry points in
+[src/stats/histogram.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/stats/histogram.cpp):
+`histograms_enabled()` / `enable_histograms()`, a process-wide
+`global_histogram_aggregator` singleton (`get_instance()`, `load_env_override()` for
+print-format overrides), and a `print_table()` formatter that renders bucketed counts.
+It is used to profile size/latency distributions on the data path when enabled.
 
 ## Connection Manager (CM)
 

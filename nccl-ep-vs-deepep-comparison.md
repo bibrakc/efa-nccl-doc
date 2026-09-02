@@ -1,6 +1,6 @@
 # NCCL EP vs DeepEP-NCCL: Comprehensive Comparison
 
-**Date**: 2026-02-28  
+**Date**: 2026-09-01  
 **Purpose**: Compare NVIDIA's NCCL EP with DeepSeek's DeepEP-NCCL for MoE communication
 
 ---
@@ -502,33 +502,142 @@ Known Limitations:
 
 ### EFA and GIN Support
 
-AWS EFA (Elastic Fabric Adapter) has **partial GIN support** with important limitations:
+AWS EFA (Elastic Fabric Adapter) now supports **both GIN paths** through the aws-ofi-nccl
+plugin: a CPU **proxy** path and a kernel-initiated **EFA-GDA / GDAKI** path. As of
+aws-ofi-nccl v1.21.x (master `d840aa1`), GDAKI is **auto-enabled** where the environment
+supports it; there is no longer a plugin knob to pick the mode.
 
 **Current EFA GIN Status**:
-- ✅ **Proxy mode supported** (NCCL_GIN_TYPE=2)
-- ❌ **GDAKI not yet supported** (NCCL_GIN_TYPE=3)
-- ⚠️ **Additional ordering requirements** for SRD protocol
+- ✅ **Proxy mode supported** — CPU progress thread assists network communication.
+- ✅ **EFA-GDA / GDAKI supported** — GPU kernel writes WQEs / reads CQEs directly. Requires
+  a supported EC2 instance type (P5en, P6-B200, P6-B300), libfabric ≥ 2.6, EFA driver ≥
+  3.3.0, rdma-core ≥ `64.0amzn0`, and the NVIDIA driver loaded with `PeerMappingOverride=1`.
+- ⚠️ **Additional ordering requirements** for SRD protocol still apply.
+
+> **Removed knob (important correction):** Earlier revisions of this document described a
+> user-selected mode via `OFI_NCCL_GIN_TYPE` (`=2` proxy, `=3` GDAKI). That plugin
+> parameter was **removed** in aws-ofi-nccl commit `80f2c78` (*"gin: enable GDAKI
+> automatically, remove OFI_NCCL_GIN_TYPE"*). The plugin no longer selects the path; GDAKI
+> capability is auto-detected at context-creation time (see below). On the NCCL side there
+> is a separate env var, `NCCL_GIN_TYPE`, which is an *NCCL* knob (not a plugin knob) that
+> chooses among the op-tables NCCL itself will bind; with NCCL 2.31 defaulting to the proxy
+> op-table for EFA, `NCCL_GIN_TYPE=5` selects the EFA-GDA GDAKI op-table. Do not confuse the
+> two.
 
 ### GIN Modes Explained
 
-| Mode | Type | Description | EFA Support |
+| Mode | Path | Description | EFA Support |
 |------|------|-------------|-------------|
-| **Proxy** | NCCL_GIN_TYPE=2 | CPU proxy handles network operations | ✅ Supported |
-| **GDAKI** | NCCL_GIN_TYPE=3 | GPU Direct Async Kernel-Initiated | ❌ Not yet |
+| **Proxy** | host / CPU-proxy | CPU progress thread posts network operations on the GPU's behalf | ✅ Supported |
+| **EFA-GDA / GDAKI** | kernel-initiated | GPU kernel posts RDMA operations directly (GPU Direct Async, Kernel-Initiated) | ✅ Supported on P5en / P6-B200 / P6-B300 |
 
 **GDAKI** (GPU Direct Async Kernel-Initiated):
-- GPU kernels directly post RDMA operations
-- No CPU involvement in critical path
-- Lowest latency, highest performance
-- **Required for optimal MoE performance**
+- GPU kernels directly write work queue entries (WQEs) and poll completion queue entries
+  (CQEs); no CPU involvement in the critical path.
+- Lowest latency, highest performance — preferred for MoE dispatch/combine.
+- Backed by the vendored EFA-GDA CUDA device sources at `3rd-party/efa-gda`
+  (efa-dp-direct), driven through the CUDA **driver** API.
 
 **Proxy Mode**:
-- GPU signals CPU proxy thread
-- Proxy posts RDMA operations
-- Additional latency from GPU→CPU→NIC path
-- Fallback when GDAKI unavailable
+- GPU enqueues work; a CPU progress thread posts RDMA operations.
+- Additional latency from the GPU→CPU→NIC path.
+- Used as the fallback whenever GDAKI is not viable in the current environment.
 
-### EFA-Specific Challenges
+### How the path is auto-selected
+
+The plugin exports separate op-tables and lets NCCL bind the one matching the negotiated
+path; the plugin itself decides GDAKI viability via
+`nccl_ofi_gin_gdaki_capable()` ([include/rdma/gin/nccl_ofi_gin_gdaki.h](https://github.com/aws/aws-ofi-nccl/blob/master/include/rdma/gin/nccl_ofi_gin_gdaki.h)),
+which returns true only when **all** of the following hold:
+
+1. GDAKI is compiled in (`HAVE_GDAKI`, which requires the vendored `3rd-party/efa-gda` CUDA sources).
+2. Runtime libfabric is **≥ 2.5** (`FI_VERSION_GE(fi_version(), FI_VERSION(2,5))`).
+3. DMA-BUF is viable (`nccl_ofi_dmabuf_viable()`).
+4. The provider is an EFA provider (`efa` / `efa-direct` — the only family exposing `FI_EFA_GDA_OPS`).
+
+If any check fails, the plugin falls back to the host/CPU-proxy path. On EFA specifically,
+the platform hook `PlatformAWS::config_gdaki_domain()`
+([include/nccl_ofi_platform.h](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_platform.h))
+gets the final say per domain (a platform returns 0 to authorize GDAKI, or an error to force
+the proxy fallback).
+
+### Plugin op-table split: `ncclGin*` vs `ncclRma*`
+
+NCCL's one-sided (GIN) network interface has been split across two families of op-tables,
+and the aws-ofi-nccl plugin exports both. This matters because NCCL binds whichever table
+matches the path it negotiated, so the exported symbol determines which code path drives
+your run. Verified with `grep -rn NCCL_OFI_EXPORT_SYMBOL src/`
+([src/rdma/gin/nccl_ofi_gin_api.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_api.cpp),
+[src/rdma/gin/nccl_ofi_gin_gdaki.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_gdaki.cpp)):
+
+| Exported symbol | Table type | File | Path it drives |
+|-----------------|------------|------|----------------|
+| `ncclGinPlugin_v11` | `ncclGin_v11_t` | `nccl_ofi_gin_api.cpp` (line 566) | Host proxy. `createContext`/`destroyContext` are `nullptr` (only relevant to GDAKI); `iput`/`iputSignal` forward `optFlags=0`. |
+| `ncclGinPlugin_v13` | `ncclGin_v13_t` | `nccl_ofi_gin_api.cpp` (line 595) | Host proxy. Introduced with NCCL v2.30. Adds `iget`/`iflush` and real `createContext_v13`/`destroyContext_v13`. |
+| `ncclGinPlugin_v14` | `ncclGin_v14_t` | `nccl_ofi_gin_gdaki.cpp` (line 1227) | **GDAKI only** (`name = "Libfabric_GDAKI"`). `createContext_v14` validates `backendVersion`, `regMrSym`/`deregMrSym` are the GDAKI variants, and it exposes `getGinProperties`/`queryLastError`. |
+| `ncclRmaPlugin_v14` | `ncclRma_v14_t` | `nccl_ofi_gin_api.cpp` (line 666) | Host / CPU-proxy path (NCCL binds via `rma_v14.cc`). Wraps the v13 proxy entry points; `iputSignal` carries a trailing `isStrongSignal` that the plugin ignores because its signals are always strong. |
+| `ncclRmaPlugin_v15` | `ncclRma_v15_t` | `nccl_ofi_gin_api.cpp` (line 732) | Host / CPU-proxy path (NCCL binds via `rma_v15.cc`, in preference to v14). Extends v14 by carrying `optFlags` (`ncclRmaOptFlags`) end-to-end so the caller's `ncclRmaOptFlagsAggregateRequests` hint reaches the doorbell-coalescing path. |
+
+**Rule of thumb:**
+- The **`ncclGin*_v14` (GDAKI)** table drives the kernel-initiated EFA-GDA path.
+- The **`ncclRma*_v14/v15`** tables drive the host/CPU-proxy path. NCCL migrated its host
+  data path from the GIN op-table to the RMA op-table at v14; the plugin's proxy `iput`/
+  `iputSignal`/`iget`/`iflush` are shared implementations reused by both the legacy
+  `ncclGin_v13` table and the newer `ncclRma_v14/v15` tables.
+- Older `ncclGin_v11/v13` remain exported for backward compatibility with pre-2.31 NCCL.
+
+Relevant commits: `c6298ae`, `19efa1c`, `3dc2e74` (vendor `rma_v15.h`, export
+`ncclRmaPlugin_v15`); `2cafa4b` / `8906c0e` / `ae03e1b` (migrate tests to the v14/v15 op
+tables).
+
+### GDAKI implementation notes
+
+The GDAKI data path (`src/rdma/gin/nccl_ofi_gin_gdaki.cpp`,
+`src/rdma/gin/nccl_ofi_gin_gdaki_resources.cpp`) has several EFA-specific behaviors worth
+knowing when reasoning about MoE traffic:
+
+- **Multi-rail**: a logical context binds to `rail = contextId % num_rails`, and
+  `effective_rails = min(nContexts, num_rails)` rails are actually used
+  ([nccl_ofi_gin_gdaki.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_gdaki.cpp) line ~483). The GDAKI path caps at `NCCL_OFI_GDAKI_MAX_RAILS = 2` EFA NICs per GPU (commit `cb00654`).
+- **Dedicated PutValue data endpoint**: a separate endpoint is used only for sending
+  PutValues (commit `6a3ba5f`); its counter is now bound for reads as well as writes
+  (commit `d840aa1`).
+- **Target-indexed signal addressing** with asymmetric counts (commit `f3dd9cd`); **indexed
+  signal shadowing** to avoid a signal read-modify-write (commit `dea6e05`), with the
+  never-reset signal shadow sized from the full MR (commit `5b46cd5`).
+- **`FI_HMEM` requested on the GDAKI endpoint hints** (commit `06f08e5`);
+  `local_cntr_value` populated on counter device handles (commit `44d0b55`).
+- **EFA hardware completion counter gated per platform** via `OFI_NCCL_GDAKI_EFA_HW_COUNTER`
+  (`AUTO`/`ON`/`OFF`, default `AUTO`) and `PlatformAWS::config_gdaki_domain()` (commit
+  `5b1f6dd`).
+- **`backendVersion` validated** in `createContext_v14` — the plugin refuses a version it
+  cannot build a matching device struct for, rather than risk silent memory corruption
+  (commit `f8e945e`).
+- **GDRCopy registration skipped** in GDAKI mode (commit `5b163ed`) — GDAKI does not need
+  the CPU-mapped signal path that the proxy path uses.
+- **Doorbell coalescing via `FI_MORE`** on the aggregate hint (commit `a3d2680`).
+- **`NCCL_NET_MR_FLAG_SIGNAL_NEVER_RESET`** synced from NCCL 2.30.7-1 (commit `d1db4c5`).
+
+### Host / proxy GIN path notes
+
+- **`NCCL_GIN_PROXY_NTHREADS`** (default 1; read via `getenv` in
+  [nccl_ofi_gin_api.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_api.cpp), not an `OFI_NCCL_*` param) enables
+  per-thread endpoint bucketing: `listen_seq % nthreads` maps each connection to its owning
+  progress thread's endpoint, so each thread drives its own CQ instead of contending on a
+  shared one (commit `e6c4eb1`).
+- **One gdrcopy worker per process** with signal coalescing (commit `ad6dcac`), fed by a new
+  lock-free MPSC ring ([include/nccl_ofi_mpsc_ring.h](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_mpsc_ring.h), commit `3e5687e`).
+- Signal memory is **registered one segment at a time** in the host proxy (commit `80d995c`);
+  the recv-req pool return is **deferred until the gdrcopy signal completes** (commit
+  `5a7bcba`).
+
+> **Removed knob (important correction):** `OFI_NCCL_GIN_STRONG_SIGNAL` and the weak-signal
+> mode were **removed** in commit `aa80b54` (*"gin: remove GIN_STRONG_SIGNAL env variable and
+> weak-signal mode"*). The plugin's signals are now **always strong**; the `isStrongSignal`
+> argument that appears in the `ncclRma_v14/v15` `iputSignal` prototypes is accepted and
+> ignored.
+
+
 
 #### 1. SRD Protocol Ordering
 
@@ -548,6 +657,13 @@ All messages in flight simultaneously
 - Signal/data race conditions
 - Completion notification before data arrival
 - Requires careful signal placement
+
+> **libfabric data-path-direct (current default):** The EFA provider now defaults
+> `FI_EFA_USE_DATA_PATH_DIRECT=true` (`efa_env.c`, `.use_data_path_direct = true`). On
+> supported devices the provider writes WQEs and reads CQEs **directly** from userspace
+> instead of routing every operation through `ibv_post_send()` / `ibv_poll_cq()`. This
+> shortens the software path for both the proxy and GDAKI cases; the SRD ordering semantics
+> above are unchanged.
 
 #### 2. Proxy Mode Performance Impact
 
@@ -594,9 +710,10 @@ Both implementations use multiple QPs (Queue Pairs) for parallelism:
 
 **Degradation**: ~10-20% vs GDAKI due to proxy overhead
 
-#### When EFA Gets GDAKI Support
+#### EFA with GDAKI (now available)
 
-**Expected Performance** (future):
+EFA-GDA / GDAKI is now available on P5en / P6-B200 / P6-B300 (see status above). Expected
+GDAKI performance relative to the proxy path:
 
 | GPUs | Nodes | NCCL EP (GDAKI) | DeepEP-NCCL (GDAKI) |
 |:----:|:-----:|:---------------:|:-------------------:|
@@ -608,7 +725,7 @@ Both implementations use multiple QPs (Queue Pairs) for parallelism:
 
 ### EFA Optimization Strategies
 
-#### For Current EFA (Proxy Mode)
+#### For EFA proxy mode
 
 1. **Reduce message count**:
    - Batch tokens when possible
@@ -630,7 +747,10 @@ Both implementations use multiple QPs (Queue Pairs) for parallelism:
    - Use NCCL's memory registration cache
    - Avoid dynamic allocation in hot path
 
-#### For Future EFA (GDAKI)
+5. **Proxy threads**: consider `NCCL_GIN_PROXY_NTHREADS>1` to give each GIN progress thread
+   its own endpoint/CQ (per-thread endpoint bucketing) instead of contending on a shared CQ.
+
+#### For EFA-GDA / GDAKI
 
 1. **Direct kernel posting**:
    - Maximize GPU-initiated operations
@@ -643,50 +763,58 @@ Both implementations use multiple QPs (Queue Pairs) for parallelism:
    - Test thoroughly for races
 
 3. **Multi-rail utilization**:
-   - Use all EFA adapters (4-8 per instance)
-   - Balance load across rails
-   - Leverage NCCL topology detection
+   - GDAKI binds contexts round-robin to rails (`rail = contextId % num_rails`), capped at
+     `NCCL_OFI_GDAKI_MAX_RAILS = 2` NICs per GPU. Use enough contexts to cover the rails.
+   - Leverage NCCL topology detection.
 
 ### EFA-Specific Configuration
 
-#### NCCL EP on EFA
+#### NCCL EP / DeepEP on EFA
 
 ```bash
-# Current: Proxy mode
-export NCCL_GIN_TYPE=2
-export NCCL_NET_PLUGIN=none  # Use built-in EFA support
+# GDAKI path is auto-detected by the plugin where supported. There is NO plugin
+# OFI_NCCL_GIN_TYPE knob anymore (removed in aws-ofi-nccl commit 80f2c78).
+#
+# On the NCCL side, NCCL 2.31 defaults to the proxy op-table for EFA. To select the
+# EFA-GDA (GDAKI) op-table explicitly, set the NCCL env var:
+export NCCL_GIN_TYPE=5
+# Symmetric GIN kernels for NCCL collectives are not supported under EFA-GDA yet:
+export NCCL_SYM_GIN_KERNELS_ENABLE=0
 
-# Future: GDAKI (when available)
-export NCCL_GIN_TYPE=3
+# EFA-GDA also needs the NVIDIA driver loaded with PeerMappingOverride=1:
+#   options nvidia NVreg_RegistryDwords="PeerMappingOverride=1"
 ```
 
 #### DeepEP-NCCL on EFA
 
 ```bash
-# Use NCCL backend with proxy mode
+# Use NCCL backend
 export DEEP_EP_BACKEND=nccl
-export NCCL_GIN_TYPE=2
 
 # Optimize for EFA
-export NCCL_IB_DISABLE=1  # Not InfiniBand
+export NCCL_IB_DISABLE=1        # Not InfiniBand
 export NCCL_SOCKET_IFNAME=eth0  # EFA interface
+
+# Optionally select the EFA-GDA GDAKI op-table (otherwise proxy is used on NCCL 2.31):
+export NCCL_GIN_TYPE=5
+export NCCL_SYM_GIN_KERNELS_ENABLE=0
 ```
 
 ### EFA Roadmap Impact
 
-**Short-term** (Proxy mode only):
-- Both implementations work but with latency overhead
-- NCCL EP still faster due to better single-node performance
-- DeepEP-NCCL production-ready with known overhead
+**Proxy path**:
+- Both implementations work but with GPU→CPU→NIC latency overhead.
+- NCCL EP still faster due to better single-node performance.
+- DeepEP-NCCL production-ready with known overhead.
 
-**Long-term** (GDAKI support):
-- Full performance potential unlocked
-- NCCL EP will see larger gains (optimized for GDAKI)
-- DeepEP-NCCL will benefit but less dramatically
+**EFA-GDA / GDAKI path (now available on P5en / P6-B200 / P6-B300)**:
+- Full performance potential unlocked (kernel-initiated, CPU out of the critical path).
+- NCCL EP sees larger gains (optimized for kernel-initiated posting).
+- DeepEP-NCCL benefits but less dramatically.
 
 **Recommendation**: 
-- **Now**: Use DeepEP-NCCL for production (proven with proxy mode)
-- **Future**: Evaluate NCCL EP when EFA GDAKI support arrives
+- **Production today**: DeepEP-NCCL (proven), proxy or GDAKI depending on instance type.
+- **Lowest latency on P5en/P6**: prefer the EFA-GDA (GDAKI) path (`NCCL_GIN_TYPE=5`).
 
 ---
 
@@ -701,7 +829,7 @@ export NCCL_SOCKET_IFNAME=eth0  # EFA interface
 5. You can wait for **maturity** (experimental)
 6. You prefer **C API** and explicit control
 7. You need **TMA optimizations** on Hopper
-8. You're on **InfiniBand with GDAKI support**
+8. You're on **EFA (P5en/P6) with EFA-GDA/GDAKI** or on **InfiniBand with GDAKI support**
 
 ### Choose DeepEP-NCCL if:
 
@@ -712,7 +840,7 @@ export NCCL_SOCKET_IFNAME=eth0  # EFA interface
 5. You want **backend flexibility** (NVSHMEM fallback)
 6. You prefer **Python API** and ease of use
 7. You need **lower latency** focus
-8. You're on **AWS EFA** (proven with proxy mode)
+8. You're on **AWS EFA** (proxy path everywhere; EFA-GDA/GDAKI on P5en/P6)
 
 ### Use Both if:
 
@@ -823,27 +951,40 @@ int num_total_signals = signals_per_buffer * 2;  // Double buffered
 ### NCCL EP Integration
 
 ```c
-// C API - explicit and verbose
-ncclEpGroupConfig_t config = {
-    .version = 1,
-    .algorithm = NCCL_EP_ALGO_LOW_LATENCY,
-    .num_experts = 256,
-    .max_tokens_per_rank = 128,
-    .token_size_bytes = 7168 * 2,  // BF16
-};
+// C API - explicit and verbose.
+// Verified against NCCL v2.31.2-1 contrib/nccl_ep (README.md, include/nccl_ep.h,
+// include/ep_enums.h). The older 3-call ncclEpTensorCreate() shape that earlier
+// revisions of this document showed does not exist: cross-boundary tensors are
+// ncclEpTensor_t* fields inside named input/output structs.
+
+ncclEpGroupConfig_t config = NCCL_EP_GROUP_CONFIG_INIT;  // pre-fills size + version
+config.algorithm                  = NCCL_EP_ALGO_LOW_LATENCY;  // or _HIGH_THROUGHPUT
+config.num_experts                = 256;
+config.max_dispatch_tokens_per_rank = 128;   // required; NCCL_EP_AUTO not yet supported
+config.max_recv_tokens_per_rank   = NCCL_EP_AUTO;  // LL: nRanks * max_dispatch_tokens
+config.max_token_bytes            = 7168 * 2;      // BF16
+config.rdma_buffer_size           = NCCL_EP_AUTO;  // lazy sizing on first handle
+config.num_qp_per_rank            = NCCL_EP_AUTO;
+config.num_channels               = NCCL_EP_AUTO;
+config.max_num_sms                = NCCL_EP_AUTO;
 
 ncclEpGroup_t ep_group;
-ncclEpCreateGroup(&ep_group, comm, &config, stream, NULL, NULL);
+ncclEpCreateGroup(&ep_group, comm, &config);
 
-ncclNDTensor_t topk_idx;
-ncclEpTensorCreate(ep_group, &topk_idx, 2, ncclInt64,
-                   NCCL_EP_TENSOR_TAG_TOPK_IDX,
-                   num_tokens, top_k);
-
+// topk_idx is a caller-owned tensor descriptor; the routing it carries is cached
+// on the handle and reused by every dispatch until ncclEpUpdateHandle() is called.
 ncclEpHandle_t handle;
-ncclEpCreateHandle(&handle, ep_group, &topk_idx, NULL, 0, NULL, stream);
+ncclEpCreateHandle(&handle, ep_group, layout, &topk_idx, layout_info,
+                   handle_cfg, stream);
 
-ncclEpDispatch(handle, inputs, 1, outputs, 1, local, 1, 0, NULL, stream);
+// inputs/outputs are named structs (ncclEpDispatchInputs_t / ...Outputs_t)
+ncclEpDispatch(handle, &dispatch_in, &dispatch_out, layout_info,
+               &dispatch_cfg, stream);
+ncclEpCombine(handle, &combine_in, &combine_out, &combine_cfg, stream);
+ncclEpComplete(handle, config, stream);   // LL mode only
+
+ncclEpHandleDestroy(handle);
+ncclEpGroupDestroy(ep_group);
 ```
 
 ### DeepEP-NCCL Integration
@@ -952,25 +1093,31 @@ The existence of both is **healthy for the ecosystem** - competition drives inno
 
 ### NCCL EP
 - **Repository**: https://github.com/NVIDIA/nccl (contrib/nccl_ep)
-- **Commit**: 361915904b456d397e6e1578f8f65ea1a45bdd28
-- **Version**: NCCL 2.29.7+
+- **Verified against**: NCCL master `fd168324` (release v2.31.2-1)
 - **Status**: Experimental
-- **Documentation**: contrib/nccl_ep/README.md
+- **Documentation**: contrib/nccl_ep/README.md, contrib/nccl_ep/RELEASE.md
 
 ### DeepEP-NCCL
 - **Repository**: https://github.com/deepseek-ai/DeepEP
+- **Fork verified against**: aamirshafi/DeepEP main `b57e5e2`
 - **Paper**: GPU-Initiated Networking for NCCL (https://arxiv.org/abs/2511.15076)
 - **Production**: DeepSeek-V3, DeepSeek-R1
 - **Status**: Production-ready
 - **Documentation**: README-NCCL.md
 
 ### NCCL GIN Device API
-- **Version**: NCCL 2.29.2+
+- **Version**: NCCL 2.29.2+ (GIN v13 op-table added in NCCL v2.30; GDAKI GIN v14 in 2.31)
 - **Examples**: nccl/docs/examples/06_device_api/
 - **Paper**: GPU-Initiated Networking (arxiv.org/abs/2511.15076)
 
+### aws-ofi-nccl GIN plugin
+- **Repository**: https://github.com/aws/aws-ofi-nccl
+- **Verified against**: master `d840aa1` (tag v1.21.1)
+- **GIN sources**: [src/rdma/gin/](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/), [include/rdma/gin/](https://github.com/aws/aws-ofi-nccl/blob/master/include/rdma/gin/)
+- **Getting-started**: [doc/gin-getting-started.md](https://github.com/aws/aws-ofi-nccl/blob/master/doc/gin-getting-started.md)
+
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: 2026-02-28  
-**Author**: Analysis based on source code examination
+**Document Version**: 1.1  
+**Last Updated**: 2026-09-01  
+**Author**: Analysis based on source code examination (aws-ofi-nccl master `d840aa1`, NCCL master `fd168324`)

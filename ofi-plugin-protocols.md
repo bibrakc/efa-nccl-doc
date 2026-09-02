@@ -52,7 +52,7 @@ ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
     .size = 1024,
     .format = FI_CQ_FORMAT_DATA,
   };
-  ret = fi_cq_open(domain, &cq_attr, &comm->cq, NULL);  // See fi_cq_open() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L363)
+  ret = fi_cq_open(domain, &cq_attr, &comm->cq, NULL);  // See fi_cq_open() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
 
   // 3. Bind endpoint to resources
   fi_ep_bind(comm->ep, &comm->cq->fid, FI_TRANSMIT | FI_RECV);
@@ -280,7 +280,7 @@ ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data,
                                 void* mhandle, void** request)
 {
   nccl_net_ofi_send_comm *comm = (nccl_net_ofi_send_comm *)sendComm;  // See struct nccl_net_ofi_send_comm (https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi.h)
-  struct fid_mr* mr = mhandle;  // See struct fid_mr (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L131-L138)
+  struct fid_mr* mr = mhandle;  // See struct fid_mr (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_domain.h)
 
   // === 1. Allocate Request ===
   nccl_net_ofi_req *req = alloc_request(comm);  // See struct nccl_net_ofi_req (https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi.h)
@@ -291,14 +291,14 @@ ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data,
 
   // === 2. Get Memory Descriptor ===
   // Descriptor contains lkey for local access
-  void* desc = fi_mr_desc(mr);  // See fi_mr_desc() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_domain.h#L147)
+  void* desc = fi_mr_desc(mr);  // See fi_mr_desc() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_domain.h)
 
   // === 3. Prepare Tagged Send ===
   // Tag identifies which NCCL operation/channel this is
   uint64_t fi_tag = (uint64_t)tag;
 
   // === 4. Post Send to Libfabric ===
-  ssize_t ret = fi_tsend(  // See fi_tsend() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L121)
+  ssize_t ret = fi_tsend(  // See fi_tsend() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_tagged.h)
       comm->ep,               // Endpoint
       data,                   // Buffer to send
       size,                   // Size
@@ -406,7 +406,7 @@ ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n,
   // === 1. Allocate Request for All Receives ===
   nccl_net_ofi_req *req = alloc_request(comm);
   req->comm = comm;
-  req->type = NCCL_OFI_RECV;
+  req->direction = NCCL_OFI_SENDRECV_RECV;   // include/nccl_ofi_sendrecv.h:31
   req->nrecvs = n;
   req->completed = 0;
 
@@ -417,7 +417,7 @@ ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n,
     uint64_t fi_tag = (uint64_t)tags[i];
 
     // === 3. Pre-Post Tagged Receive ===
-    ssize_t ret = fi_trecv(  // See fi_trecv() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_tagged.h#L98)
+    ssize_t ret = fi_trecv(  // See fi_trecv() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_tagged.h)
         comm->ep,               // Endpoint
         data[i],                // Receive buffer
         sizes[i],               // Size
@@ -542,8 +542,8 @@ ncclResult_t nccl_net_ofi_test(void* request, int* done, int* size)
   *done = 0;
 
   // === 1. Poll Completion Queue ===
-  struct fi_cq_data_entry entries[CQ_POLL_BATCH];  // See struct fi_cq_data_entry (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L215-L220)
-  int nread = fi_cq_read(comm->cq, entries, CQ_POLL_BATCH);  // See fi_cq_read() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L311)
+  struct fi_cq_data_entry entries[CQ_POLL_BATCH];  // See struct fi_cq_data_entry (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
+  int nread = fi_cq_read(comm->cq, entries, CQ_POLL_BATCH);  // See fi_cq_read() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
 
   if (nread > 0) {
     // === 2. Process Completions ===
@@ -585,8 +585,8 @@ ncclResult_t nccl_net_ofi_test(void* request, int* done, int* size)
   }
   else {
     // Error
-    struct fi_cq_err_entry err;  // See struct fi_cq_err_entry (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L233-L246)
-    fi_cq_readerr(comm->cq, &err, 0);  // See fi_cq_readerr() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_eq.h#L348)
+    struct fi_cq_err_entry err;  // See struct fi_cq_err_entry (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
+    fi_cq_readerr(comm->cq, &err, 0);  // See fi_cq_readerr() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
 
     // Handle error
     return ncclSystemError;
@@ -665,7 +665,7 @@ Receiver                               Sender
                                           fi_cq_read() → CTS msg
 
                                        8. RDMA Write
-                                          fi_write(data,  // See fi_write() (https://github.com/ofiwg/libfabric/blob/6b9e629/include/rdma/fi_rma.h#L111)
+                                          fi_write(data,  // See fi_write() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_rma.h)
                                                    remote_addr,
                                                    remote_key)
                                           ─────────────────────→
@@ -696,14 +696,37 @@ any data moves) dominates latency. The RDMA transport therefore has an **eager**
 path: messages at or below `EAGER_MAX_SIZE` are sent in a single operation that
 carries the payload inline, with no prior control message from the receiver.
 
-- Controlled by `OFI_NCCL_EAGER_MAX_SIZE` (env `EAGER_MAX_SIZE`), default **8192**
-  bytes. Setting it to `-1` disables the eager path entirely.
+> **The eager path is DISABLED BY DEFAULT.** `OFI_NCCL_EAGER_MAX_SIZE`
+> (env `EAGER_MAX_SIZE`) now defaults to **-1**, which disables eager entirely
+> ([include/nccl_ofi_param.h:229](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_param.h),
+> `OFI_NCCL_PARAM(int, eager_max_size, "EAGER_MAX_SIZE", -1)`; comment: "Default is
+> disabled"). The default was flipped to disabled in master `7df78cd`
+> ("param: Disable eager messages by default") and `708572b`
+> ("rdma: Disable eager messages by default"), after `082120d` had briefly
+> re-enabled it. To use eager, set `EAGER_MAX_SIZE` to a positive byte count
+> (e.g. `8192`). The mechanics below apply **when eager is enabled**.
+
+- Controlled by `OFI_NCCL_EAGER_MAX_SIZE` (env `EAGER_MAX_SIZE`); **default -1
+  (disabled)**. Set to a positive value (e.g. 8192) to enable eager for messages at or
+  below that size.
 - The sender posts the payload (prefixed by an 8-byte eager header) with
   `fi_sendmsg(..., FI_REMOTE_CQ_DATA)` onto a single rail; the receiver consumes
   it from a pre-posted **eager receive (rx) buffer**, then copies it into the
   application destination.
 - Control and eager rx buffers use **separate freelists** and separate posted-rx
   limits, so eager traffic cannot starve the control path.
+
+### Eager correctness fixes
+
+Several correctness fixes accompanied the eager work; they matter for anyone reading
+older code or debugging eager (once re-enabled):
+
+- **`1206868`** — fix eager send reporting size 0 when the ctrl msg arrives at a
+  different `seq_num`.
+- **`41c9c36`** — preserve eager queue matching.
+- **`f50d60e`** — require full ctrl-msg arrival before consuming ctrl entries.
+- **`9de49c8`** — move `msg_seq_num` to the *end* of the ctrl-msg entry (so a partially
+  arrived ctrl msg is never treated as complete; pairs with `f50d60e`).
 
 ### Eager message header
 
@@ -751,7 +774,7 @@ The fix (master commit `1a70558`, shipped in v1.20.0) introduces a **dedicated
 
 | | Eager | Rendezvous |
 |---|---|---|
-| Message size | ≤ `EAGER_MAX_SIZE` (default 8 KB) | larger messages |
+| Message size | ≤ `EAGER_MAX_SIZE` (default -1 = **disabled**; e.g. 8 KB when enabled) | larger messages |
 | Control handshake | none (payload sent inline) | control message before data |
 | Network op | `fi_sendmsg` (+`FI_REMOTE_CQ_DATA`) | control msg + `fi_write` |
 | Round trips | one-way | round trip before data |
@@ -869,34 +892,75 @@ transport and adds group communication (all-ranks-to-all-ranks).
 
 ### GIN Modes: Proxy vs GDAKI
 
-GIN ships in two variants, selected at runtime by `OFI_NCCL_GIN_TYPE`
-(env `GIN_TYPE`); the plugin exports the corresponding `ncclGin` symbol to NCCL:
+GIN has two data-path modes: **proxy** (a CPU proxy thread issues the underlying
+libfabric writes) and **GDAKI / EFA-GDA** (the GPU kernel drives the EFA queues
+directly). The plugin exports separate op tables for each — proxy via
+`ncclGinPlugin_v11`/`v13` and `ncclRmaPlugin_v14`/`v15`, GDAKI via `ncclGinPlugin_v14`
+(see [ofi-plugin.md](ofi-plugin.md) for the full symbol table and the GIN-vs-RMA split).
 
-- **PROXY** (default): proxy-mode GIN. The GPU kernel enqueues put/putSignal
-  operations and the **CPU proxy thread** issues the underlying libfabric
-  `fi_write`/`fi_writedata` operations on the GPU's behalf. Works on any
-  EFA-capable build.
-- **GDAKI** (`--enable-gdaki` builds only): **kernel-initiated** networking.
-  The GPU kernel drives the EFA queues directly — no CPU proxy on the data path.
-  `createContext` builds a device handle in **GPU memory** describing the send
-  queue (SQ), completion queue (CQ), and receive queue (RQ); the kernel posts
-  WQEs and polls CQEs using EFA's **ownership/phase-bit protocol**. The on-GPU
-  queue layout is compatible with the `efa_cuda_qp` / `efa_cuda_cq` types from
-  `efa-dp-direct`, which NCCL's device code uses directly.
+> **`OFI_NCCL_GIN_TYPE` has been REMOVED.** The old plugin env var
+> `OFI_NCCL_GIN_TYPE` (env `GIN_TYPE`) that selected PROXY vs GDAKI **no longer exists**
+> — removed in master `80f2c78` ("gin: enable GDAKI automatically, remove
+> OFI_NCCL_GIN_TYPE"). There is no such knob in `include/nccl_ofi_param.h` anymore, and
+> there is no `--enable-gdaki` configure flag. Do not treat `OFI_NCCL_GIN_TYPE` as a
+> live setting.
 
-  GDAKI has hard prerequisites: **CUDA**, **DMA-BUF**, and **libfabric 2.5+**
-  (the proxy domain is opened with the 2.5 ABI so the EFA hardware-counter ops
-  are exposed via `fi_open_ops`). Requesting `GIN_TYPE=GDAKI` on a plugin built
-  without GDAKI support fails plugin init with `ncclInvalidUsage` rather than
-  silently falling back to proxy mode.
+**Current selection logic.** Mode selection is now split between the plugin (which
+capability is *available*) and NCCL (which one is *used*):
 
-| | Proxy GIN | GDAKI GIN |
+1. **Plugin build:** GDAKI is compiled in only when `HAVE_GDAKI` holds (libfabric ≥ 2.5
+   `FI_EFA_GDA_OPS` + hardware-counter ABI + CUDA device interface — see `configure.ac`).
+   When compiled in, the plugin exports `ncclGinPlugin_v14` (`name = "Libfabric_GDAKI"`).
+2. **Plugin runtime capability:** `nccl_ofi_gin_gdaki_capable()`
+   ([include/rdma/gin/nccl_ofi_gin_gdaki.h](https://github.com/aws/aws-ofi-nccl/blob/master/include/rdma/gin/nccl_ofi_gin_gdaki.h))
+   returns true only if GDAKI is compiled in **and** the runtime satisfies: libfabric
+   ≥ 2.5, DMA-BUF viable, and an `efa`-family provider. GDRCopy 2.5+ (forced PCIe copy)
+   is additionally required and checked in `nccl_ofi_gin_init`.
+3. **NCCL-side choice:** NCCL binds the highest op-table version it understands. Per
+   `doc/gin-getting-started.md`, **NCCL 2.31 defaults to proxy for EFA**; the
+   application opts into EFA-GDA with the **NCCL** env var `NCCL_GIN_TYPE=5` (plus
+   `NCCL_SYM_GIN_KERNELS_ENABLE=0`). `NCCL_GIN_TYPE` here is an *NCCL* variable, not the
+   removed plugin `OFI_NCCL_GIN_TYPE`.
+
+**Fallback behaviour.** GDAKI does not silently degrade to proxy inside the plugin: if a
+requested GDAKI capability (e.g. the EFA hardware completion counter, gated by
+`OFI_NCCL_GDAKI_EFA_HW_COUNTER=AUTO/ON/OFF`) cannot be satisfied, GDAKI context creation
+**fails** rather than falling back. Falling back to proxy is an application decision —
+per the getting-started guide, "if an application needs functionality that is not
+currently supported by EFA-GDA, it can use the proxy mode as a fallback." EFA-GDA also
+does not support strong signals or VA signals, so the app must set
+`ginStrongSignalsRequired = false` and `ginVaSignalsRequired = false`.
+
+> **Removed knob:** `OFI_NCCL_GIN_STRONG_SIGNAL` (env `GIN_STRONG_SIGNAL`) and the
+> weak-signal mode were **removed** in master `aa80b54` ("gin: remove GIN_STRONG_SIGNAL
+> env variable and weak-signal mode"). The plugin's signals are now **always strong**;
+> there is no such param in `include/nccl_ofi_param.h`. (On the RMA op-table, the v14
+> `iputSignal` still carries a trailing `isStrongSignal` argument for NCCL ABI
+> compatibility, but the plugin ignores it — see `nccl_ofi_rma_iputSignal_v14` in
+> [nccl_ofi_gin_api.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/rdma/gin/nccl_ofi_gin_api.cpp).)
+
+- **PROXY** (NCCL default on EFA): the GPU kernel enqueues put/putSignal operations and
+  the **CPU proxy thread** issues the underlying libfabric `fi_write`/`fi_writedata`
+  operations on the GPU's behalf. Works on any EFA-capable build. Proxy properties
+  advertise `netDeviceType = NCCL_NET_DEVICE_GIN_PROXY`.
+- **GDAKI / EFA-GDA** (opt-in via NCCL `NCCL_GIN_TYPE=5`, requires `HAVE_GDAKI` build +
+  runtime prerequisites): **kernel-initiated** networking. The GPU kernel drives the EFA
+  queues directly — no CPU proxy on the data path. `createContext` builds a device
+  handle in **GPU memory** describing the send queue (SQ), completion queue (CQ), and
+  receive queue (RQ); the kernel posts WQEs and polls CQEs using EFA's
+  **ownership/phase-bit protocol**. The on-GPU queue layout is compatible with the
+  `efa_cuda_qp` / `efa_cuda_cq` types from `efa-dp-direct` (vendored under
+  `3rd-party/efa-gda/`).
+
+| | Proxy GIN | GDAKI GIN (EFA-GDA) |
 |---|---|---|
 | Data-path driver | CPU proxy thread (`fi_write`) | GPU kernel (direct EFA queue access) |
-| Build requirement | standard EFA build | `--enable-gdaki` |
-| Runtime prerequisites | EFA | CUDA + DMA-BUF + libfabric 2.5+ |
-| Completion detection | libfabric CQ | EFA hardware counters / phase-bit CQ polling |
-| Default | yes | no (opt-in via `GIN_TYPE=GDAKI`) |
+| Op table(s) exported | `ncclGin_v11/v13`, `ncclRma_v14/v15` | `ncclGin_v14` (`Libfabric_GDAKI`) |
+| Build requirement | standard EFA build | `HAVE_GDAKI` (libfabric ≥ 2.5 GDA ops + hw counter + CUDA) |
+| Runtime prerequisites | EFA + GDRCopy 2.5+ | CUDA + DMA-BUF + libfabric ≥ 2.5 + GDRCopy 2.5+ + `efa` provider; AWS: P5en/P6-B200/P6-B300, EFA driver 3.3.0+, rdma-core 64.0amzn0+, NVIDIA `PeerMappingOverride=1` |
+| Completion detection | libfabric CQ | EFA hardware completion counter / phase-bit CQ polling in GPU memory |
+| Selected by | NCCL default on EFA | NCCL `NCCL_GIN_TYPE=5` (not a plugin env var) |
+| Signals | strong + VA supported | indexed only; strong/VA **not** supported |
 
 ### GIN Connection Establishment
 
@@ -941,4 +1005,4 @@ group communicator where all ranks can put data to all other ranks:
 | Notification | Completion queue or tag match | Atomic signal increment |
 | Bootstrap | CM handshake (2 messages) | Ring connect + AllGather |
 | Use case | NCCL collectives | DeepEP MoE dispatch |
-| API | ncclNet_v12_t | ncclGin_v13_t |
+| API | ncclNet_v4..v12 | ncclGin_v11/v13 + ncclGin_v14 (GDAKI) + ncclRma_v14/v15 (host proxy) |

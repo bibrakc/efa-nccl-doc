@@ -195,16 +195,52 @@ Channel Count = min(
 ### Environment Variables
 
 ```bash
-# Minimum number of channels
+# Minimum number of channels (deprecated alias, see note below)
 export NCCL_MIN_NCHANNELS=8
 
-# Maximum number of channels
+# Maximum number of channels (deprecated alias, see note below)
 export NCCL_MAX_NCHANNELS=32
 
-# Channels for tree algorithms
-export NCCL_TREE_THRESHOLD=0  # Message size threshold
-export NCCL_TREE_MAX_NCHANNELS=8
+# Preferred current knobs (per-rank CTA/channel budget)
+export NCCL_MIN_CTAS=8
+export NCCL_MAX_CTAS=32
+
+# Number of channels dedicated to each network peer (multi-node)
+export NCCL_NCHANNELS_PER_NET_PEER=2
 ```
+
+**Notes on these knobs (verified against source):**
+
+- The hard ceiling on channels is the compile-time constant `MAXCHANNELS = 64`
+  ([nccl/src/include/device.h, line 91](https://github.com/NVIDIA/nccl/blob/master/src/include/device.h)).
+  Both the min and max requests are clamped to this value in `ncclMinNchannels()` /
+  `ncclMaxNchannels()`
+  ([nccl/src/graph/connect.cc, lines ~334-357](https://github.com/NVIDIA/nccl/blob/master/src/graph/connect.cc)).
+- `NCCL_MIN_NCHANNELS` / `NCCL_MAX_NCHANNELS` (and their legacy aliases
+  `NCCL_MIN_NRINGS` / `NCCL_MAX_NRINGS`) are still parsed
+  ([connect.cc, lines ~328-332](https://github.com/NVIDIA/nccl/blob/master/src/graph/connect.cc))
+  but are **documented as deprecated since NCCL 2.17 in favor of `NCCL_MAX_CTAS` /
+  `NCCL_MIN_CTAS`**, which set the per-rank CTA (block) budget that in turn bounds the
+  channel count (see [docs/userguide/source/env.rst](https://github.com/NVIDIA/nccl/blob/master/docs/userguide/source/env.rst),
+  entries for `NCCL_MAX_NCHANNELS` and `NCCL_MAX_CTAS`). `ncclMaxNchannels()` intersects
+  the request with `comm->config.maxCTAs` and with `ncclDevMaxChannelsForArgsBytes()`
+  (the device work-args limit), while the final `comm->nChannels` is
+  `min(maxNchannels, nChannels, config.maxCTAs, sharedRes->tpNChannels)`
+  ([connect.cc, lines ~497-505](https://github.com/NVIDIA/nccl/blob/master/src/graph/connect.cc)).
+- `NCCL_NCHANNELS_PER_NET_PEER` controls how many channels are used to talk to each
+  network peer; the env var is parsed in
+  [nccl/src/init.cc, lines ~1839 and ~2150-2160](https://github.com/NVIDIA/nccl/blob/master/src/init.cc)
+  and, when left unset for the >1-NVLink-domain case, defaults are computed in
+  [nccl/src/graph/paths.cc, lines ~974 and ~1024-1025](https://github.com/NVIDIA/nccl/blob/master/src/graph/paths.cc)
+  where the network is treated as the bottleneck.
+- **There is no `NCCL_TREE_MAX_NCHANNELS` environment variable** — it does not exist
+  anywhere in the NCCL source tree. Tree and Ring share the same channel budget; the
+  tuner (cost model in `src/tuning/`) decides how many of the available channels each
+  algorithm uses per message size. `NCCL_TREE_THRESHOLD` does still exist
+  ([env.rst](https://github.com/NVIDIA/nccl/blob/master/docs/userguide/source/env.rst)).
+- 2.31 adds `NCCL_NVLINK_UTIL_CENTRIC_SCHED_ENABLE` (NVLink-utilization-centric
+  scheduling), parsed alongside the channel/CTA knobs in
+  [init.cc, lines ~2170+](https://github.com/NVIDIA/nccl/blob/master/src/init.cc).
 
 ## Channel Establishment Mechanism
 
@@ -277,12 +313,18 @@ Channel 5  → NIC 1
 ...
 Channel 15 → NIC 3
 
-With Affinity (NCCL_NET_BINDINGS):
+With NUMA/topology affinity (driven by the detected PCI/NUMA topology, not a single
+env var — see NCCL_TOPO_FILE and NCCL_NET_GDR_LEVEL):
 Channels 0-3   → NIC 0 (numa0)
 Channels 4-7   → NIC 1 (numa1)
 Channels 8-11  → NIC 2 (numa2)
 Channels 12-15 → NIC 3 (numa3)
 ```
+
+> Note: there is no `NCCL_NET_BINDINGS` environment variable. Channel-to-NIC affinity is
+> derived from the discovered topology (`src/graph/paths.cc`, `src/graph/topo.cc`) and can
+> be influenced with `NCCL_TOPO_FILE`, `NCCL_NET_GDR_LEVEL`, and CPU/NIC affinity settings,
+> not by a dedicated bindings variable.
 
 ## Channels vs Multi-Rail: Key Distinctions
 
@@ -400,7 +442,8 @@ p4d.24xlarge Example (4 EFA NICs, 16 channels):
 
 **1. Round-Robin Distribution (Default)**
 ```bash
-export OFI_EFA_ROUND_ROBIN_HASH=1  # Default behavior
+# No environment variable controls this: round-robin assignment of channels
+# to rails is the plugin's built-in default (see topology-and-binding.md).
 
 Impact on EFA:
 - QPs spread across all adapters
@@ -510,7 +553,6 @@ Poor distribution (All on one adapter):
 ```bash
 # Small messages, latency sensitive (< 1MB)
 export NCCL_MAX_NCHANNELS=4
-export OFI_EFA_ROUND_ROBIN_HASH=1
 # Minimize overhead, maximize responsiveness
 
 # Large messages, bandwidth critical (> 16MB)
@@ -659,6 +701,36 @@ Note: Actual optimum depends on network latency and bandwidth
    export NCCL_TUNER_PLUGIN=aws-efa-tuner.so
    ```
 
+   **How the aws-ofi-nccl tuner overrides the channel count (verified against
+   `src/tuner/` at v1.21.1):** NCCL looks up the tuner symbol
+   `ncclTunerPlugin_v6` (the v6 ABI, introduced for NCCL 2.30.3+); the OFI tuner also
+   still exports v2/v3 shims for older cores
+   ([aws-ofi-nccl/src/tuner/nccl_ofi_tuner.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/tuner/nccl_ofi_tuner.cpp)).
+   The v6 entry points are `getCollInfo` (fills the algo/proto cost table **and** can
+   write `*nChannels`) and the new `getChunkSize` callback. The region tuner
+   ([nccl_ofi_regions.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/tuner/nccl_ofi_regions.cpp))
+   normally only steers the algorithm/protocol and leaves `*nChannels` for NCCL to
+   decide, but for specific platform/collective cases it now computes an explicit channel
+   count:
+   - **PAT channel optimization** for AllGather/ReduceScatter (PAT + Simple) on **P6 and
+     P6-B300** at `nBytes <= 32 MB` with one rank per node — `calculateBestNChannelPat()`
+     (enabled together with the region path in
+     [nccl_ofi_regions.cpp, lines ~2147-2153](https://github.com/aws/aws-ofi-nccl/blob/master/src/tuner/nccl_ofi_regions.cpp);
+     PAT-on-P6-B300 support corresponds to aws-ofi-nccl commit 4a8ed08).
+   - **Tree/LL128 AllReduce** on **P6 (B200)** in the 4-32 MB range with 8 ranks/node —
+     `calculateBestNChannelTree()` picks the channel count that maximizes chunk size
+     ([lines ~2135-2145](https://github.com/aws/aws-ofi-nccl/blob/master/src/tuner/nccl_ofi_regions.cpp)).
+   - **P5en chunk-size tuning** via the v6 `getChunkSize` callback:
+     `chunkSizeTuningAllGatherPatSimpleP5en()` (PAT/Simple AllGather) and
+     `chunkSizeTuningTreeLL128P5en()` (Tree/LL128) step chunk size down a power-of-2
+     ladder to keep the per-channel data within PAT's `NCCL_STEPS = 8` in-flight budget
+     ([lines ~2160-2301](https://github.com/aws/aws-ofi-nccl/blob/master/src/tuner/nccl_ofi_regions.cpp);
+     corresponds to aws-ofi-nccl commits b5ed24e, cb33a4c).
+
+   When the tuner has no opinion it returns without touching the cost table and NCCL
+   falls back to its own cost model in `src/tuning/`. The full platform table and region
+   details live in the sibling [nccl-tuner.md](nccl-tuner.md).
+
 2. **Message Size Aware Configuration**
    ```python
    # Application-level tuning
@@ -672,7 +744,10 @@ Note: Actual optimum depends on network latency and bandwidth
    ```bash
    # Force protocol to avoid transitions
    export NCCL_PROTO=Simple  # For large messages
-   export NCCL_LL128_THRESHOLD=8388608  # 8 MB threshold
+   # There is no NCCL_LL128_THRESHOLD variable. Protocol crossover is decided by the
+   # tuner/cost model; to constrain the choice, restrict the protocol set instead:
+   export NCCL_PROTO=LL128,Simple       # exclude LL
+   export NCCL_PROTO=^LL128             # exclude LL128 entirely
    ```
 
 ### Parallel Execution
@@ -862,32 +937,75 @@ export NCCL_MAX_NCHANNELS=4
 ### AWS Instance Specific
 
 ```bash
-# p4d.24xlarge (8 GPUs, 4 NICs)
+# p4d.24xlarge (8 A100, 4 EFA @ 100 Gbps each = 400 Gbps)
 export NCCL_MIN_NCHANNELS=16
 export NCCL_MAX_NCHANNELS=32
 
-# p5.48xlarge (8 H100s, 32 NICs)
+# p5.48xlarge / p5e.48xlarge (8 H100, 32 EFA @ 100 Gbps = 3200 Gbps)
+export NCCL_MIN_NCHANNELS=32
+export NCCL_MAX_NCHANNELS=64
+
+# p5en.48xlarge (8 H200, EFAv3)
+export NCCL_MIN_NCHANNELS=32
+export NCCL_MAX_NCHANNELS=64
+
+# p6-b200.48xlarge (8 B200, Blackwell)
+export NCCL_MIN_NCHANNELS=32
+export NCCL_MAX_NCHANNELS=64
+
+# p6-b300.48xlarge (B300, Blackwell)
 export NCCL_MIN_NCHANNELS=32
 export NCCL_MAX_NCHANNELS=64
 ```
+
+The hard ceiling for all instances is `MAXCHANNELS = 64`. On EFA instances you should
+normally **not** hand-tune these — the aws-ofi-nccl region/model tuner (loaded as
+`NCCL_TUNER_PLUGIN`) already carries per-platform tuning for **p5/p5e, p5en, p6-b200 and
+p6-b300**, including explicit channel-count and chunk-size overrides for PAT and Tree/LL128
+on the P6 family (see the tuner subsection above and [nccl-tuner.md](nccl-tuner.md)).
+Note that **p4d is not a recognized tuner platform** in aws-ofi-nccl v1.21 — only the P5
+and P6 families have region/model support; on p4d NCCL falls back to its own cost model.
+Trn2 (Trainium2) uses the Neuron stack rather than the NCCL/CUDA channel machinery
+described here and is likewise not an OFI-tuner platform.
 
 ## Channel Memory Requirements
 
 ### Per-Channel Memory
 
-```
-Each channel requires:
-- Send buffer: 1 MB default
-- Recv buffer: 1 MB default
-- Protocol headers: ~256 KB
-- Work queue: ~64 KB
-- Connection state: ~32 KB per peer
+NCCL allocates one FIFO buffer **per protocol** per channel connection. The
+per-protocol sizes come from `computeBuffSizes()`
+([nccl/src/init.cc, lines ~860-905](https://github.com/NVIDIA/nccl/blob/master/src/init.cc)),
+which fills `comm->buffSizes[NCCL_NUM_PROTOCOLS]` from the environment or from these
+compile-time defaults:
 
-Total per channel: ~2.5 MB + (32 KB * num_peers)
-
-32 channels, 8 GPUs:
-32 * (2.5 MB + 256 KB) = ~88 MB
 ```
+Simple protocol (NCCL_BUFFSIZE):     DEFAULT_BUFFSIZE   = 1 << 22 = 4 MiB
+LL protocol (NCCL_LL_BUFFSIZE):      DEFAULT_LL_BUFFSIZE   (derived from
+                                     NCCL_LL_LINES_PER_THREAD * NCCL_LL_MAX_NTHREADS
+                                     * NCCL_STEPS * sizeof(ncclLLFifoLine))
+LL128 protocol (NCCL_LL128_BUFFSIZE):DEFAULT_LL128_BUFFSIZE (derived from
+                                     NCCL_LL128_ELEMS_PER_THREAD * NCCL_LL128_MAX_NTHREADS
+                                     * NCCL_STEPS * sizeof(uint64_t))
+```
+
+Key points (verified in source):
+
+- The Simple-protocol buffer default is **4 MiB per channel connection**, not 1 MiB.
+  `NCCL_BUFFSIZE` overrides it directly (env value `!= -2` wins over the default).
+- Each buffer is divided into `NCCL_STEPS = 8` slots
+  ([nccl/src/include/device.h, line 26](https://github.com/NVIDIA/nccl/blob/master/src/include/device.h));
+  the FIFO depth is what lets a channel keep multiple chunks in flight.
+- The P2P chunk size is derived from the buffer and clamped so that
+  `p2pChunkSize * NCCL_STEPS <= buffSizes[NCCL_PROTO_SIMPLE]`
+  ([init.cc, `computeBuffSizes`](https://github.com/NVIDIA/nccl/blob/master/src/init.cc)).
+  Defaults: `NCCL_P2P_NET_CHUNKSIZE = 128 kB`, `NCCL_P2P_PCI_CHUNKSIZE = 128 kB`,
+  `NCCL_P2P_NVL_CHUNKSIZE = 512 kB` (the ARM/Grace-Blackwell multi-node case doubles the
+  net chunk ratio).
+- Because the buffer is allocated per channel, total FIFO memory scales with the channel
+  count. With the 4 MiB Simple default, 32 channels use on the order of
+  `32 × 4 MiB = 128 MiB` of Simple-protocol FIFO per connection direction (LL/LL128
+  buffers are additional but smaller), so raising `NCCL_MIN_NCHANNELS`/`NCCL_MAX_CTAS`
+  has a real memory cost.
 
 ### Memory Registration
 
@@ -963,18 +1081,26 @@ for (int c = 0; c < nChannels; c++) {
 ## References
 
 ### Source Code
-- NCCL channel init: `src/init.cc:initChannel()`
-- Channel establishment: `src/transport.cc:ncclTransportP2pSetup()`
-- Work distribution: `src/enqueue.cc:ncclEnqueueWork()`
-- Proxy threads: `src/proxy.cc:proxyThread()`
+- Channel allocation / init: [nccl/src/channel.cc `initChannel()` (line ~13)](https://github.com/NVIDIA/nccl/blob/master/src/channel.cc) — note this lives in `src/channel.cc`, not `src/init.cc`.
+- Channel count selection: [nccl/src/graph/connect.cc `ncclMinNchannels()` / `ncclMaxNchannels()` (lines ~334-357)](https://github.com/NVIDIA/nccl/blob/master/src/graph/connect.cc)
+- Ring/tree topology build per channel: [nccl/src/graph/connect.cc](https://github.com/NVIDIA/nccl/blob/master/src/graph/connect.cc), [nccl/src/graph/rings.cc](https://github.com/NVIDIA/nccl/blob/master/src/graph/rings.cc), [nccl/src/graph/trees.cc](https://github.com/NVIDIA/nccl/blob/master/src/graph/trees.cc)
+- Buffer sizing: [nccl/src/init.cc `computeBuffSizes()` (lines ~860-905)](https://github.com/NVIDIA/nccl/blob/master/src/init.cc)
+- P2P connection setup: [nccl/src/transport.cc `ncclTransportP2pSetup()`](https://github.com/NVIDIA/nccl/blob/master/src/transport.cc)
+- Work distribution / enqueue: [nccl/src/enqueue/enqueue.cc](https://github.com/NVIDIA/nccl/blob/master/src/enqueue/enqueue.cc) — moved here from `src/enqueue.cc` in 2.31.
+- Proxy threads: [nccl/src/proxy.cc](https://github.com/NVIDIA/nccl/blob/master/src/proxy.cc)
+- Cost-model tuning (2.31, replaces the old `src/graph/tuning.cc`): [nccl/src/tuning/](https://github.com/NVIDIA/nccl/blob/master/src/tuning) — `cost_model.cc`, `ring.cc`, `tree.cc`, `nvls.cc`, `pat.cc`, `collnet.cc`, plus `ce_model.cc` and `sym_model.cc`.
 
 ### Key Headers
-- `include/channel.h` - Channel structures
-- `include/comm.h` - Communicator with channels
-- `include/transport.h` - Transport layer interface
+- [nccl/src/include/channel.h](https://github.com/NVIDIA/nccl/blob/master/src/include/channel.h) — channel structures (note: under `src/include/`, not top-level `include/`)
+- [nccl/src/include/comm.h](https://github.com/NVIDIA/nccl/blob/master/src/include/comm.h) — communicator; `channels[MAXCHANNELS]`
+- [nccl/src/include/device.h](https://github.com/NVIDIA/nccl/blob/master/src/include/device.h) — `MAXCHANNELS = 64`, `NCCL_STEPS = 8`, `NCCL_MAX_TREE_ARITY = 3`
+- [nccl/src/include/transport.h](https://github.com/NVIDIA/nccl/blob/master/src/include/transport.h) — transport interface
 
 ### Environment Variables
-- `NCCL_MIN_NCHANNELS` - Minimum channels
-- `NCCL_MAX_NCHANNELS` - Maximum channels
-- `NCCL_NCHANNELS` - Force specific count (deprecated)
-- `NCCL_TREE_MAX_NCHANNELS` - Channels for tree
+- `NCCL_MIN_NCHANNELS` / `NCCL_MAX_NCHANNELS` — min/max channels (deprecated since 2.17 in favor of `NCCL_MIN_CTAS` / `NCCL_MAX_CTAS`)
+- `NCCL_MIN_CTAS` / `NCCL_MAX_CTAS` — per-rank CTA/channel budget (current knobs)
+- `NCCL_NCHANNELS_PER_NET_PEER` — channels per network peer
+- `NCCL_BUFFSIZE` / `NCCL_LL_BUFFSIZE` / `NCCL_LL128_BUFFSIZE` — per-protocol FIFO buffer size (Simple default 4 MiB)
+- `NCCL_NVLINK_UTIL_CENTRIC_SCHED_ENABLE` — NVLink-utilization-centric scheduling (added in 2.31)
+- `NCCL_TREE_THRESHOLD` — message-size threshold for tree vs ring
+- (There is **no** `NCCL_TREE_MAX_NCHANNELS` variable.)

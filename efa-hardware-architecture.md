@@ -11,10 +11,12 @@ AWS Elastic Fabric Adapter (EFA) is a custom network interface designed for HPC 
 - **Completion Descriptors (CQE)**: Results returned by hardware
 - **Address Handles (AH)**: Destination addressing for SRD transport
 
-**Source Locations**:
+**Source Locations** (versions: EFA kernel driver **r3.3.0** / amzn-drivers `master`;
+libfabric **2.7.0rc1** `main`; rdma-core **65.0-dev** `master`, latest release v64.0):
 - Kernel driver: [amzn-drivers/kernel/linux/efa/src/](https://github.com/amzn/amzn-drivers/tree/master/kernel/linux/efa/src)
-- Key headers: [efa_io_defs.h](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h), [efa_verbs.h](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h)
+- Key headers: [efa_io_defs.h](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h), [efa_verbs.h](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h)
 - Libfabric provider: [libfabric/prov/efa/](https://github.com/ofiwg/libfabric/tree/main/prov/efa)
+- Libfabric Data Path Direct: [efa_data_path_direct*.{c,h}](https://github.com/ofiwg/libfabric/tree/main/prov/efa/src) (see [rdma-core-and-verbs.md](rdma-core-and-verbs.md))
 
 ## Queue Pair Architecture
 
@@ -22,7 +24,7 @@ AWS Elastic Fabric Adapter (EFA) is a custom network interface designed for HPC 
 
 EFA supports multiple queue pair types.
 
-**`enum efa_io_queue_type`** ([efa_io_defs.h:15-20](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L15-L20)):
+**`enum efa_io_queue_type`** ([efa_io_defs.h:15-20](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
 
 ```c
 enum efa_io_queue_type {
@@ -34,7 +36,7 @@ enum efa_io_queue_type {
 ```
 
 **Transport Types**:
-- **SRD (Scalable Reliable Datagram)**: Primary transport for EFA, defined as `EFA_QPT_SRD` in [efa_verbs.h:36](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L36)
+- **SRD (Scalable Reliable Datagram)**: Primary transport for EFA, defined as `EFA_QPT_SRD` in [efa_verbs.h:36](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h)
 - Similar semantics to UD (Unreliable Datagram) but with reliability
 - Out-of-order delivery without segmentation
 - Address Handle (AH) provided with each work request
@@ -45,7 +47,7 @@ The Send Queue contains work requests (WQEs) posted by software and consumed by 
 
 **Operations Supported**:
 
-**`enum efa_io_send_op_type`** ([efa_io_defs.h:22-33](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L22-L33)):
+**`enum efa_io_send_op_type`** ([efa_io_defs.h:22-33](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
 
 ```c
 enum efa_io_send_op_type {
@@ -82,7 +84,7 @@ The Receive Queue contains pre-posted receive buffers for incoming messages.
 
 ### TX WQE Structure
 
-**`struct efa_io_tx_wqe`** ([efa_io_defs.h:236-255](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L236-L255)):
+**`struct efa_io_tx_wqe`** (64-byte WQE) ([efa_io_defs.h](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h), lines ~236-255):
 
 ```c
 struct efa_io_tx_wqe {
@@ -107,15 +109,43 @@ struct efa_io_tx_wqe {
 };
 ```
 
-**Size**: Estimated 64 bytes (meta descriptor + data union)
+**Size**: 64 bytes (meta descriptor + data union).
+
+### 128-byte (wide) TX WQE
+
+**New in EFA kernel driver r3.3.0 / libfabric 2.7.0:** the device can advertise a
+**128-byte send-queue WQE** format, and the libfabric data-path-direct code onboarded
+it. The wider WQE mainly enlarges the inline-data capacity and the RDMA inline path.
+
+**`struct efa_io_tx_wqe_128`** ([efa_io_defs.h](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h), lines ~187-201):
+
+```c
+struct efa_io_tx_wqe_128 {
+	struct efa_io_tx_meta_desc meta;
+	union {
+		struct efa_io_tx_buf_desc sgl[2];
+		uint8_t inline_data[80];              /* 32 -> 80 bytes inline */
+		struct efa_io_rdma_req_128 rdma_req;  /* supports inline RDMA WRITE */
+	} data;
+};
+```
+
+- Inline message capacity grows from **32 bytes** (64B WQE) to **80 bytes** (128B WQE).
+- `struct efa_io_rdma_req_128` adds an 80-byte inline buffer so **inline RDMA WRITE**
+  is possible (kernel r3.3.0 "inline WRITE operation support"). The libfabric SQ
+  entry stride (`wq.wqe_size`) is queried from the device via `efadv_query_qp_wqs()`
+  and is either 64 or 128; the direct data path copies WQEs with `mmio_memcpy_x64()`
+  using that runtime size. The kernel selects the SQ WQE size in
+  `efa_calc_sq_wqe_size_kernel()` and enables inline write when `wqe_size > 64`
+  ([efa_verbs.c](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.c) lines ~938-1164).
 
 ### TX Metadata Descriptor
 
-**`struct efa_io_tx_meta_desc`** ([efa_io_defs.h:75-130](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L75-L130)):
+**`struct efa_io_tx_meta_desc`** ([efa_io_defs.h](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h), meta descriptor):
 
 ```c
 struct efa_io_tx_meta_desc {
-	/* Verbs-generated Request ID */
+	/* Verbs-generated Request ID (low 16 bits) */
 	u16 req_id;
 
 	/*
@@ -138,27 +168,49 @@ struct efa_io_tx_meta_desc {
 	u8 ctrl2;
 
 	u16 dest_qp_num;      // Destination QP number
-	u16 length;           // SGL length or inline data size
+	u16 length;           // SGL length (num buffers) or inline data size
 	u32 immediate_data;   // Immediate data (if has_imm set)
 	u16 ah;               // Address Handle index
-	u16 reserved;
+
+	/*
+	 * control flags
+	 * 1:0 : processing_hints - enum efa_io_processing_hint
+	 * 7:2 : reserved - MBZ
+	 */
+	u8 ctrl3;
+	u8 reserved;
+
 	u32 qkey;             // Queue key for datagram QPs
-	u8 reserved2[12];
+	u8 reserved2[6];
+
+	/* Upper 48 bits of a 64-bit request ID (see below) */
+	struct efa_io_req_id_ex req_id_ex;
 };
 ```
 
 **Key Fields**:
-- `req_id`: Software-generated ID for matching completions (16 bits)
+- `req_id`: Software-generated ID for matching completions (low 16 bits)
+- `req_id_ex`: three additional 16-bit words holding the upper 48 bits of a
+  **64-bit request ID** when the QP is created with the 64-bit request-ID
+  capability (`EFADV_WQ_CAPS_64_BIT_REQ_ID`, kernel r3.3.0). In the classic
+  16-bit scheme `req_id` instead carries a wrid-pool index OR-ed with the QP
+  generation.
 - `op_type`: Operation type (send, RDMA read/write, etc.)
 - `phase`: Ring buffer wrap-around detection
 - `comp_req`: Whether to generate a completion event
 - `dest_qp_num`: Remote QP number (SRD transport)
 - `ah`: Address Handle for destination addressing
+- `ctrl3.processing_hints`: `EFA_IO_PROCESSING_HINT_BURST_PPS_SENSITIVE` set by the
+  provider for the `FI_EFA_WR_HIGH_PPS` hint on RDMA WRITE
 - `qkey`: Protection key for datagram operations
+
+**`struct efa_io_req_id_ex`** — three 16-bit words (`w[0..2]`) forming, together
+with the 16-bit `req_id`, the full 64-bit request ID
+(`efa_set_req_id_64()` / `efa_get_req_id_64()` in the libfabric data-path-direct code).
 
 ### TX Buffer Descriptor
 
-**`struct efa_io_tx_buf_desc`** ([efa_io_defs.h:136-151](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L136-L151)):
+**`struct efa_io_tx_buf_desc`** ([efa_io_defs.h:136-151](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
 
 ```c
 struct efa_io_tx_buf_desc {
@@ -183,11 +235,12 @@ struct efa_io_tx_buf_desc {
 - Up to 2 SGL entries per WQE (see `EFA_IO_TX_DESC_NUM_BUFS = 2`)
 - 64-bit physical addresses split into low/high 32-bit words
 - 24-bit lkey for memory protection
-- Inline data mode: Up to 32 bytes inline (`EFA_IO_TX_DESC_INLINE_MAX_SIZE`)
+- Inline data mode: Up to 32 bytes inline on a 64-byte WQE, or up to 80 bytes on a
+  128-byte (wide) WQE (`EFA_IO_TX_DESC_INLINE_MAX_SIZE`)
 
 ### RX Descriptor
 
-**`struct efa_io_rx_desc`** ([efa_io_defs.h:261-282](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L261-L282)):
+**`struct efa_io_rx_desc`** ([efa_io_defs.h:261-282](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
 
 ```c
 struct efa_io_rx_desc {
@@ -227,7 +280,7 @@ struct efa_io_rx_desc {
 
 Completion events are written by hardware to the Completion Queue (CQ).
 
-**`struct efa_io_cdesc_common`** ([efa_io_defs.h:285-308](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L285-L308)):
+**`struct efa_io_cdesc_common`** ([efa_io_defs.h:285-308](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
 
 ```c
 struct efa_io_cdesc_common {
@@ -254,7 +307,7 @@ struct efa_io_cdesc_common {
 };
 ```
 
-**`struct efa_io_tx_cdesc`** ([efa_io_defs.h:311-317](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L311-L317)):
+**`struct efa_io_tx_cdesc`** ([efa_io_defs.h:311-317](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
 
 ```c
 struct efa_io_tx_cdesc {
@@ -266,7 +319,7 @@ struct efa_io_tx_cdesc {
 };
 ```
 
-**`struct efa_io_rx_cdesc`** ([efa_io_defs.h:320-334](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L320-L334)):
+**`struct efa_io_rx_cdesc`** ([efa_io_defs.h:320-334](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
 
 ```c
 struct efa_io_rx_cdesc {
@@ -297,7 +350,7 @@ struct efa_io_rx_cdesc {
 
 ### Completion Status Codes
 
-**`enum efa_io_comp_status`** ([efa_io_defs.h:35-68](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L35-L68)):
+**`enum efa_io_comp_status`** ([efa_io_defs.h:35-68](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
 
 ```c
 enum efa_io_comp_status {
@@ -361,7 +414,7 @@ Phase Bit Tracking:
 
 All buffers must be registered before use:
 
-**`struct efa_io_fast_mr_reg_req`** ([efa_io_defs.h:175-222](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L175-L222)):
+**`struct efa_io_fast_mr_reg_req`** ([efa_io_defs.h:175-222](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
 
 ```c
 struct efa_io_fast_mr_reg_req {
@@ -401,11 +454,11 @@ struct efa_io_fast_mr_reg_req {
 
 **PBL Modes**:
 
-**`enum efa_io_frwr_pbl_mode`** ([efa_io_defs.h:70-73](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L70-L73)):
+**`enum efa_io_frwr_pbl_mode`** ([efa_io_defs.h:70-73](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
 - `EFA_IO_FRWR_INLINE_PBL`: Page list inline in descriptor (small regions)
 - `EFA_IO_FRWR_DIRECT_PBL`: Page list in separate buffer (large regions)
 
-**lkey/rkey Format** ([efa_verbs.h:38-47](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L38-L47)):
+**lkey/rkey Format** ([efa_verbs.h:38-47](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h)):
 
 ```c
 #define EFA_MR_GEN_SHIFT 20
@@ -427,7 +480,7 @@ static inline void efa_inc_fast_reg_key_gen(struct ib_mr *mr)
 
 ### RDMA Operations
 
-**`struct efa_io_rdma_req`** ([efa_io_defs.h:167-173](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L167-L173)):
+**`struct efa_io_rdma_req`** ([efa_io_defs.h:167-173](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
 
 ```c
 struct efa_io_rdma_req {
@@ -439,7 +492,7 @@ struct efa_io_rdma_req {
 };
 ```
 
-**`struct efa_io_remote_mem_addr`** ([efa_io_defs.h:153-165](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L153-L165)):
+**`struct efa_io_remote_mem_addr`** ([efa_io_defs.h:153-165](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
 
 ```c
 struct efa_io_remote_mem_addr {
@@ -468,7 +521,7 @@ struct efa_io_remote_mem_addr {
 
 ### SRD Work Request Structure
 
-**`struct ib_srd_wr`** ([efa_verbs.h:13-18](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L13-L18)):
+**`struct ib_srd_wr`** ([efa_verbs.h:13-18](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h)):
 
 ```c
 struct ib_srd_wr {
@@ -479,7 +532,7 @@ struct ib_srd_wr {
 };
 ```
 
-**`struct ib_srd_rdma_wr`** ([efa_verbs.h:20-24](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L20-L24)):
+**`struct ib_srd_rdma_wr`** ([efa_verbs.h:20-24](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h)):
 
 ```c
 struct ib_srd_rdma_wr {
@@ -544,7 +597,8 @@ From libfabric EFA provider defaults and kernel driver capabilities:
 - Max QP WR: 16384 (per SQ/RQ)
 - Max CQ entries: 262144
 - Max SGL entries per WR: 2 (send), 1 (recv) for most operations
-- Max inline data: 32 bytes
+- Max inline data: 32 bytes (64-byte WQE) or **80 bytes (128-byte WQE)** on devices
+  advertising the wide-WQE capability (r3.3.0)
 
 **Memory Consumption** (estimated):
 - SQ: 64 bytes/entry × depth
@@ -560,6 +614,17 @@ Example for 512-entry QP + 1024-entry CQ:
 For 1000 QPs: ~72 MB of queue memory
 
 ## Programming Model
+
+> **Who writes these descriptors.** By default (libfabric 2.3.0+, RDM-enabled in
+> 2.7.0) the EFA provider's **Data Path Direct** code builds and posts these WQEs
+> and reads these CQEs itself — it maps the SQ/RQ/CQ buffers and doorbell
+> registers via rdma-core once at QP/CQ creation (`efadv_query_qp_wqs()` /
+> `efadv_query_cq()`), then writes WQEs straight into write-combining device
+> memory with `mmio_memcpy_x64()` and reads CQEs directly from the mapped CQ
+> buffer. When `FI_EFA_USE_DATA_PATH_DIRECT=0` the identical descriptor writes are
+> performed by rdma-core/libibverbs (`ibv_wr_*`, `ibv_start_poll`) instead. The
+> pseudo-code below shows the descriptor manipulation that happens on either path.
+> See [rdma-core-and-verbs.md](rdma-core-and-verbs.md) for the full dispatch detail.
 
 ### Posting Send Request
 
@@ -643,6 +708,10 @@ if (cq->consumer_idx == 0) {
 
 ### Protocol Support by Generation
 
+The kernel driver (**EFA r3.3.0**) enumerates PCI VF device IDs
+`0xefa0`, `0xefa1`, `0xefa2`, `0xefa3`, and **`0xefa4`** (new in r3.3.0)
+([efa_main.c](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_main.c) lines ~27-38).
+
 **EFA Gen 2** (p4d, p4de instances):
 - SRD transport only
 - Send/Recv operations native
@@ -658,10 +727,20 @@ if (cq->consumer_idx == 0) {
 - MTU: 8192 bytes
 - 35% lower latency on p5en (EFAv3)
 
+**Device features exposed in r3.3.0** (see [kernel-efa-driver.md](kernel-efa-driver.md)):
+- **Completion Counters** (`EFA_ADMIN_*_EVENT_COUNTER` admin opcodes 25-29) — hardware
+  completion counters, used by GDAKI / GPU-initiated paths.
+- **QP/SQ creation with 64-bit work request IDs** (`EFA_QUERY_DEVICE_CAPS_SQ_64_BIT_REQ_ID`,
+  exposed to userspace as `EFADV_WQ_CAPS_64_BIT_REQ_ID`).
+- **128-byte send-queue WQEs** and **inline WRITE** (`EFA_QUERY_DEVICE_CAPS_DATA_POLLING_128`,
+  `efa_calc_sq_wqe_size_kernel()`).
+- **>4 GB MR page size** via an extended page-shift field in MR registration.
+- **AH device-object reuse** via an rhashtable AH cache.
+
 ### DMA-BUF GPU Memory Support
 
 **Requirements**:
-- EFA Gen 4+ (device ID 0xefa3 or higher)
+- EFA Gen 4+ (device ID 0xefa3 or higher; the r3.3.0 driver adds 0xefa4)
 - Linux kernel 5.12+
 - Libfabric 1.20+
 
@@ -669,7 +748,8 @@ if (cq->consumer_idx == 0) {
 - GPU memory exported as DMA-BUF file descriptor
 - Registered as MR via `fi_mr_regattr()` with `FI_HMEM` flag
 - Hardware performs DMA directly to/from GPU memory
-- Page merging: 4KB pages → 2MB pages (estimated 256x fewer IOMMU entries)
+- Page merging: 4KB pages → 2MB pages (estimated 256x fewer IOMMU entries), and
+  r3.3.0 adds support for MR page sizes larger than 4 GB
 
 **Supported GPUs**:
 - NVIDIA (CUDA via dmabuf)
@@ -700,10 +780,20 @@ if (cq->consumer_idx == 0) {
 
 ### Throughput
 
+**Per-EFA link speed** is reported by the device and translated by the kernel
+driver. As of r3.3.0 the driver reports link speeds up to **800 Gbps** and
+**1600 Gbps** (`efa_link_gbps_to_speed_and_width()` maps ≥1600 → `IB_SPEED_XDR`,
+≥800 → `IB_SPEED_NDR`, in
+[efa_verbs.c](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.c) lines ~417-439),
+and exposes the raw speed in Gbps via a new query-port verb. Earlier
+100-Gbps-per-EFA instances remain common:
+
 **Single QP Limits**:
 - p4d: 100 Gbps per EFA (4 EFAs total, shared across 8 GPUs)
-- p5+: 100 Gbps per EFA (32 EFAs total, 4 per GPU)
-- Effective per-GPU: ~400 Gbps (50 GB/s)
+- p5/p5e/p5en: 100 Gbps per EFA (32 EFAs total, 4 per GPU); ~400 Gbps effective per GPU
+- Newer EFA generations report per-link speeds of 800 Gbps and 1600 Gbps
+  (`max_link_speed_gbps` in the device attributes, `EFA_ADMIN` network attr)
+- Effective per-GPU: aggregate of all EFAs bound to that GPU
 
 **Message Rate**:
 - Small messages (64B): ~10-15 Mpps per QP
@@ -716,13 +806,14 @@ if (cq->consumer_idx == 0) {
 |--------|---------|
 | **Queue Types** | Send Queue (SQ), Receive Queue (RQ), Completion Queue (CQ) |
 | **Transport** | SRD (Scalable Reliable Datagram) - reliable out-of-order delivery |
-| **WQE Size** | 64 bytes (TX), 32 bytes (RX) |
+| **WQE Size** | 64 bytes (TX), or **128 bytes** with wide-WQE cap (r3.3.0); 32 bytes (RX) |
 | **CQE Size** | 8 bytes (TX), 16 bytes (RX) |
 | **Max Queue Depth** | 16384 (SQ/RQ), 262144 (CQ) |
 | **Typical Depth** | 512 (SQ/RQ), 1024 (CQ) |
-| **Operations** | Send, RDMA Read/Write, Fast MR Reg/Inv |
+| **Operations** | Send, RDMA Read/Write (+ inline write on 128B WQE), Fast MR Reg/Inv |
 | **SGL Entries** | 2 per send WQE, 1 per recv WQE |
-| **Inline Data** | 32 bytes max |
+| **Inline Data** | 32 bytes (64B WQE) / 80 bytes (128B WQE) |
+| **Data path** | **Data Path Direct by default** (provider drives SQ/RQ/CQ); libibverbs fallback |
 | **Memory Layout** | Ring buffers with phase bit tracking |
 | **Access Model** | Zero-copy kernel bypass (mmap + doorbell) |
 | **SW Overhead** | ~150-300 ns per operation |
@@ -750,38 +841,38 @@ if (cq->consumer_idx == 0) {
 ### Structures
 
 **amzn-drivers (EFA Kernel Driver)**:
-- `enum efa_io_queue_type` ([efa_io_defs.h:15-20](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L15-L20))
-- `enum efa_io_send_op_type` ([efa_io_defs.h:22-33](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L22-L33))
-- `enum efa_io_comp_status` ([efa_io_defs.h:35-68](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L35-L68))
-- `enum efa_io_frwr_pbl_mode` ([efa_io_defs.h:70-73](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L70-L73))
-- `struct efa_io_tx_meta_desc` ([efa_io_defs.h:75-130](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L75-L130))
-- `struct efa_io_tx_buf_desc` ([efa_io_defs.h:136-151](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L136-L151))
-- `struct efa_io_remote_mem_addr` ([efa_io_defs.h:153-165](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L153-L165))
-- `struct efa_io_rdma_req` ([efa_io_defs.h:167-173](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L167-L173))
-- `struct efa_io_fast_mr_reg_req` ([efa_io_defs.h:175-222](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L175-L222))
-- `struct efa_io_fast_mr_inv_req` ([efa_io_defs.h:224-230](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L224-L230))
-- `struct efa_io_tx_wqe` ([efa_io_defs.h:236-255](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L236-L255))
-- `struct efa_io_rx_desc` ([efa_io_defs.h:261-282](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L261-L282))
-- `struct efa_io_cdesc_common` ([efa_io_defs.h:285-308](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L285-L308))
-- `struct efa_io_tx_cdesc` ([efa_io_defs.h:311-317](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L311-L317))
-- `struct efa_io_rx_cdesc` ([efa_io_defs.h:320-334](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_io_defs.h#L320-L334))
-- `struct ib_srd_wr` ([efa_verbs.h:13-18](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L13-L18))
-- `struct ib_srd_rdma_wr` ([efa_verbs.h:20-24](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L20-L24))
+- `enum efa_io_queue_type` ([efa_io_defs.h:15-20](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
+- `enum efa_io_send_op_type` ([efa_io_defs.h:22-33](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
+- `enum efa_io_comp_status` ([efa_io_defs.h:35-68](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
+- `enum efa_io_frwr_pbl_mode` ([efa_io_defs.h:70-73](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
+- `struct efa_io_tx_meta_desc` ([efa_io_defs.h:75-130](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
+- `struct efa_io_tx_buf_desc` ([efa_io_defs.h:136-151](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
+- `struct efa_io_remote_mem_addr` ([efa_io_defs.h:153-165](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
+- `struct efa_io_rdma_req` ([efa_io_defs.h:167-173](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
+- `struct efa_io_fast_mr_reg_req` ([efa_io_defs.h:175-222](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
+- `struct efa_io_fast_mr_inv_req` ([efa_io_defs.h:224-230](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
+- `struct efa_io_tx_wqe` ([efa_io_defs.h:236-255](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
+- `struct efa_io_rx_desc` ([efa_io_defs.h:261-282](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
+- `struct efa_io_cdesc_common` ([efa_io_defs.h:285-308](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
+- `struct efa_io_tx_cdesc` ([efa_io_defs.h:311-317](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
+- `struct efa_io_rx_cdesc` ([efa_io_defs.h:320-334](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h))
+- `struct ib_srd_wr` ([efa_verbs.h:13-18](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h))
+- `struct ib_srd_rdma_wr` ([efa_verbs.h:20-24](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h))
 
 ### Functions
 
 **amzn-drivers (EFA Kernel Driver)**:
-- `efa_inc_fast_reg_key_gen()` ([efa_verbs.h:41-47](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L41-L47))
+- `efa_inc_fast_reg_key_gen()` ([efa_verbs.h:41-47](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h))
 
 ### Constants/Defines
 
 **amzn-drivers (EFA Kernel Driver)**:
-- `EFA_QPT_SRD` ([efa_verbs.h:36](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L36))
-- `EFA_MR_GEN_SHIFT`, `EFA_MR_GEN_MASK` ([efa_verbs.h:38-39](https://github.com/amzn/amzn-drivers/blob/8a8b6f2/kernel/linux/efa/src/efa_verbs.h#L38-L39))
+- `EFA_QPT_SRD` ([efa_verbs.h:36](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h))
+- `EFA_MR_GEN_SHIFT`, `EFA_MR_GEN_MASK` ([efa_verbs.h:38-39](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h))
 
 ### Total Code References
 - **17 structures/enums** from amzn-drivers
 - **1 inline function** from amzn-drivers
 - **3 constants** from amzn-drivers
 
-All references link to commit `8a8b6f2` in the [amzn/amzn-drivers](https://github.com/amzn/amzn-drivers) repository.
+All references link to the `master` branch of the [amzn/amzn-drivers](https://github.com/amzn/amzn-drivers) repository (EFA kernel driver **r3.3.0**). Line numbers are given in the link text since branch URLs are not pinned.

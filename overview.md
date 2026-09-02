@@ -4,12 +4,17 @@
 
 This documentation covers the integration of NVIDIA NCCL (NVIDIA Collective Communications Library) with AWS EFA (Elastic Fabric Adapter) through the OFI (OpenFabrics Interfaces) plugin and libfabric.
 
-**Current Versions (as of June 2026):**
-- NCCL: 2.30.x (v2.30.4-1)
-- OFI Plugin (aws-ofi-nccl): C++ codebase, latest release v1.20.0, master at [f3dd9cd](https://github.com/aws/aws-ofi-nccl/commit/f3dd9cd)
-- Libfabric: 2.6.x series with EFA provider
-- rdma-core: v63+
-- EFA Hardware: v2 (P5) and v3 (P5en, P6)
+**Current Versions (as of September 2026):**
+- NCCL: 2.31.x (v2.31.2-1)
+- OFI Plugin (aws-ofi-nccl): C++ codebase (**C++20 required**), latest release v1.21.1, master at [d840aa1](https://github.com/aws/aws-ofi-nccl)
+- Libfabric: 2.7.x series (2.7.0rc1) with EFA provider
+- rdma-core: v64+ (65.0 in development)
+- EFA kernel driver: r3.3.0
+- EFA Hardware: v2 (P4d/P5) and v3 (P5en, P6); the new `0xefa4` PCI device ID has been onboarded in the driver
+
+> C++20 became mandatory in the plugin (aws-ofi-nccl master `a615420`, "c++: Require
+> c++20 in the plugin"): `configure.ac` calls `AX_CXX_COMPILE_STDCXX([20], [noext],
+> [mandatory])` and compiles with `-fno-rtti`. Earlier releases required only C++17.
 
 ## Architecture Stack
 
@@ -23,14 +28,16 @@ put operations used by workloads like DeepEP (Mixture-of-Experts dispatch).
 └─────────────────────────────────────────────────────────┘
                     │
 ┌─────────────────────────────────────────────────────────┐
-│              NCCL Library (2.30.x)                      │
+│              NCCL Library (2.31.x)                      │
 │  - Collectives (AllReduce, AllGather, etc.)             │
 │  - Algorithms (Ring, Tree, PAT, NVLS)                   │
 │  - GIN Device API (put, putSignal for GPU-initiated     │
 │    one-sided operations used by DeepEP/MoE workloads)   │
-│  - Transport abstraction (Net, CollNet, GIN plugins)    │
+│  - Transport abstraction (Net, CollNet, GIN/RMA plugins)│
 └──────────────┬──────────────────────┬───────────────────┘
-               │ ncclNet_v12_t API    │ ncclGin_v13_t API
+               │ ncclNet_v12_t API    │ ncclGin_v13_t /
+               │ (net: v4..v12)       │ ncclGin_v14_t (GDAKI) /
+               │                      │ ncclRma_v14_t/v15_t (host proxy)
 ┌──────────────▼──────────────────────▼───────────────────┐
 │          OFI NCCL Plugin (aws-ofi-nccl)                 │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐   │
@@ -45,25 +52,35 @@ put operations used by workloads like DeepEP (Mixture-of-Experts dispatch).
                            │ libfabric API (fi_tsend,
                            │ fi_write, fi_mr_reg, etc.)
 ┌──────────────────────────▼──────────────────────────────┐
-│            Libfabric (2.x)                              │
+│            Libfabric (2.7.x)                            │
 │  - Provider-agnostic API                                │
 │  - EFA provider implementation                          │
-└──────────────────────────┬──────────────────────────────┘
-                           │ libibverbs API (ibv_post_send,
-                           │ ibv_reg_mr, etc.)
-┌──────────────────────────▼──────────────────────────────┐
-│         rdma-core (libibverbs, v61+)                    │
-│  - Userspace verbs library                              │
-│  - EFA provider plugin                                  │
-│  - Zero-copy queue operations via memory-mapped rings   │
-└──────────────────────────┬──────────────────────────────┘
-                           │ ioctl / mmap
-┌──────────────────────────▼──────────────────────────────┐
+│    • Data-path-direct is DEFAULT (FI_EFA_USE_DATA_PATH_ │
+│      DIRECT=true): the provider writes WQEs and reads    │
+│      CQEs itself, bypassing libibverbs on the data path  │
+│    • Falls back to the libibverbs verbs path only when   │
+│      data-path-direct is disabled                        │
+└───────┬───────────────────────────────────┬─────────────┘
+        │ (default) data-path-direct:         │ (fallback) libibverbs
+        │ WQEs/CQEs written directly to        │ verbs API (ibv_post_send,
+        │ hardware doorbells/CQ rings          │ ibv_reg_mr, ...) only when
+        │                                      │ data-path-direct disabled
+        │                          ┌───────────▼──────────────────────────┐
+        │                          │   rdma-core (libibverbs, v64+)        │
+        │                          │  - Userspace verbs library            │
+        │                          │  - EFA provider plugin                │
+        │                          │  - CONTROL PATH by default (QP/CQ     │
+        │                          │    setup, MR registration); DATA PATH │
+        │                          │    only when data-path-direct is off  │
+        │                          └───────────┬──────────────────────────┘
+        │                                      │ ioctl / mmap
+┌───────▼──────────────────────────────────────▼──────────┐
 │          EFA Kernel Driver  (efa.ko)                    │  ◄── lowest open-source layer
 │  - Device control (uverbs interface)                    │
 │  - Memory registration (page pinning, IOMMU mapping)    │
 │  - GPU/accelerator peer memory (P2P) + DMA-BUF          │
 │  - Admin-queue command interface; hardware resource mgmt │
+│  - r3.3.0; new 0xefa4 PCI device ID onboarded           │
 └──────────────────────────┬──────────────────────────────┘
             admin queue cmds │ + data-path doorbells/CQs
 ┌──────────────────────────▼──────────────────────────────┐
@@ -85,13 +102,28 @@ congestion control run in closed NIC firmware, reached only through admin-queue 
 and data-path doorbells/CQs. See [kernel-efa-driver.md](kernel-efa-driver.md) for the
 firmware boundary, admin-queue phase-bit protocol, and GPU peer-memory internals.
 
+**Data-path-direct (libibverbs bypass).** As of libfabric 2.7.x the EFA provider
+defaults `FI_EFA_USE_DATA_PATH_DIRECT=true` ([prov/efa/src/efa_env.c:41](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_env.c), `.use_data_path_direct = true`).
+In this mode the provider formats send/receive/RDMA WQEs and reads CQEs itself —
+writing straight to the hardware doorbells and completion-queue rings — instead of
+routing every data-path operation through libibverbs (`ibv_post_send`/`ibv_poll_cq`).
+The implementation lives in [prov/efa/src/efa_data_path_direct.c](https://github.com/ofiwg/libfabric/blob/main/prov/efa/src/efa_data_path_direct.c) and
+`efa_data_path_direct*.{c,h}`. rdma-core/libibverbs is therefore a **control-path**
+component by default (QP/CQ creation, memory registration, address handles); the
+libibverbs data path is used only as a **fallback** when data-path-direct is disabled
+(`FI_EFA_USE_DATA_PATH_DIRECT=0`) or unavailable at build time (`HAVE_EFA_DATA_PATH_DIRECT`).
+
 ## Component Roles
 
 ### NCCL
 - **Purpose**: High-performance multi-GPU/multi-node collective communication
 - **Key Features**: Optimized collective algorithms, topology awareness, transport abstraction
-- **Net Plugin API** (`ncclNet_v12_t`, newest; older versions down to v4 also exported for back-compat): Standard send/recv/write interface for collective operations
-- **GIN Plugin API** (`ncclGin_v13_t`, newest; `ncclGin_v11_t` also exported): One-sided put/signal interface for GPU-initiated networking (DeepEP/MoE)
+- **Net Plugin API** (`ncclNet_v12_t`, newest; older versions down to `ncclNet_v4` also exported for back-compat): Standard send/recv/write interface for collective operations
+- **GIN / RMA Plugin APIs** (GPU-initiated / one-sided networking for DeepEP/MoE): the plugin now exports **several** op tables and NCCL binds the highest version it understands:
+  - `ncclGinPlugin_v11`, `ncclGinPlugin_v13` — proxy-mode GIN (`src/rdma/gin/nccl_ofi_gin_api.cpp`)
+  - `ncclGinPlugin_v14` — **GDAKI-only** kernel-initiated GIN op table (`src/rdma/gin/nccl_ofi_gin_gdaki.cpp`)
+  - `ncclRmaPlugin_v14`, `ncclRmaPlugin_v15` — the host/CPU-proxy one-sided path (`src/rdma/gin/nccl_ofi_gin_api.cpp`)
+  See [ofi-plugin.md](ofi-plugin.md) for the full symbol table and the GIN-vs-RMA split.
 - **Focus Areas**: Collective operations, data path, algorithms
 
 ### OFI NCCL Plugin
@@ -113,7 +145,11 @@ firmware boundary, admin-queue phase-bit protocol, and GPU peer-memory internals
 ### rdma-core (libibverbs)
 - **Purpose**: Userspace RDMA verbs library
 - **Key Features**: Hardware-agnostic verbs API, provider plugins, zero-copy operations
-- **Focus Areas**: ibv_post_send/recv, ibv_poll_cq, memory-mapped queues, EFA provider
+- **Role on EFA**: **Control path by default** — QP/CQ creation, memory registration
+  (`ibv_reg_mr`), address handles. With libfabric's data-path-direct default the EFA
+  provider bypasses libibverbs for `ibv_post_send`/`ibv_poll_cq` on the data path; the
+  verbs data path is the fallback when data-path-direct is disabled.
+- **Focus Areas**: ibv_post_send/recv, ibv_poll_cq, memory-mapped queues, EFA provider (v64+, 65.0 in development)
 
 ### AWS EFA
 - **Purpose**: High-performance network interface for EC2 instances
@@ -131,8 +167,13 @@ firmware boundary, admin-queue phase-bit protocol, and GPU peer-memory internals
 2. **NCCL** breaks down collective into point-to-point operations based on algorithm
 3. **NCCL proxy thread** calls plugin API (isend/irecv/iwrite/iflush)
 4. **OFI Plugin** translates NCCL network calls to libfabric operations
-5. **Libfabric EFA Provider** converts to rdma-core verbs calls
-6. **rdma-core (libibverbs)** posts work requests via verbs API (ibv_post_send/recv)
+5. **Libfabric EFA Provider** builds WQEs and reads CQEs. By default
+   (`FI_EFA_USE_DATA_PATH_DIRECT=true`) it writes them directly to the hardware
+   doorbells/CQ rings, **bypassing libibverbs on the data path**. When
+   data-path-direct is disabled it instead calls rdma-core verbs
+   (`ibv_post_send`/`ibv_poll_cq`).
+6. **rdma-core (libibverbs)** is used for control-path setup (QP/CQ creation,
+   `ibv_reg_mr`) always, and for the data path only in the fallback case
 7. **EFA Kernel Driver** manages memory registration and device control via uverbs
 8. **EFA Hardware** performs zero-copy DMA and transmits over SRD protocol
 
@@ -202,10 +243,20 @@ for details.
 - Used by workloads like DeepEP (Mixture-of-Experts dispatch)
 - Provides `iput` (data transfer) and `iputSignal` (data + atomic notification)
 - Wraps RDMA transport with additional resource management
-- Two modes selected by `OFI_NCCL_GIN_TYPE`: **PROXY** (default; CPU proxy issues
-  the libfabric writes) and **GDAKI** (`--enable-gdaki` builds; the GPU kernel
-  drives the EFA queues directly — kernel-initiated networking, no CPU on the data
-  path, requires CUDA + DMA-BUF + libfabric 2.5+)
+- Two data-path modes: **proxy** (a CPU proxy thread issues the libfabric writes on
+  the GPU's behalf) and **GDAKI / EFA-GDA** (the GPU kernel drives the EFA queues
+  directly — kernel-initiated networking, no CPU on the data path).
+- **Selection is no longer done by an OFI plugin env var.** `OFI_NCCL_GIN_TYPE` was
+  **removed** (master `80f2c78`, "gin: enable GDAKI automatically, remove
+  OFI_NCCL_GIN_TYPE"). The plugin now **auto-enables GDAKI** whenever it is compiled in
+  (`HAVE_GDAKI`) and the runtime supports it (libfabric ≥ 2.5 with `FI_EFA_GDA_OPS`,
+  DMA-BUF viable, EFA provider); otherwise it exports only the proxy path. Which table
+  NCCL actually binds is decided **NCCL-side**: NCCL 2.31 defaults to proxy for EFA, and
+  the application selects EFA-GDA with the NCCL env var `NCCL_GIN_TYPE=5`
+  (see aws-ofi-nccl `doc/gin-getting-started.md`). GDAKI additionally requires CUDA,
+  GDRCopy 2.5+, and (on AWS) P5en/P6-B200/P6-B300 with the NVIDIA driver's
+  `PeerMappingOverride` enabled.
+- See [ofi-plugin.md](ofi-plugin.md) and [ofi-plugin-protocols.md](ofi-plugin-protocols.md) for the proxy-vs-GDAKI comparison and prerequisites
 - See [nccl-ep-vs-deepep-comparison.md](nccl-ep-vs-deepep-comparison.md) for NCCL EP vs DeepEP analysis
 - See [gin-alltoall-libfabric-trace.md](gin-alltoall-libfabric-trace.md) for detailed libfabric call trace
 

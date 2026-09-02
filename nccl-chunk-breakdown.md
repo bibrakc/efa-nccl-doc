@@ -2,10 +2,11 @@
 
 > ## ✅ VERIFIED FROM NCCL SOURCE CODE
 >
-> **All information verified from NCCL 2.28.9 source code:**
+> **All information originally verified from NCCL 2.28.9 source code, re-checked against NCCL v2.31.2-1:**
+> The chunk/slice sizing primitives cited below (`NCCL_STEPS = 8`, `DEFAULT_BUFFSIZE = 4 MiB`, `calcCollChunking()`, `ALLREDUCE_CHUNKSTEPS`/`ALLREDUCE_SLICESTEPS`, `ProtoSimple`) are unchanged in 2.31. Note that in current NCCL the enqueue/tuning code was reorganized: `enqueue.cc` now lives at `src/enqueue/enqueue.cc` and the algorithm cost models moved to `src/tuning/`. Line numbers in `nccl-2.28.9-1/...` references are historical.
 > - `src/include/collectives.h` - SLICESTEPS and CHUNKSTEPS definitions
 > - `src/include/device.h` - NCCL_STEPS = 8
-> - `src/enqueue.cc` - calcCollChunking() function
+> - `src/enqueue/enqueue.cc` - calcCollChunking() function (was `src/enqueue.cc` pre-2.31)
 > - Channel-based chunking
 > - Ring algorithm step calculation
 > - Protocol subdivision (Simple, LL128, LL)
@@ -110,7 +111,7 @@ Chunk per Step = 8MB / 8 = 1MB
 
 ### Level 3.5: NCCL Pipelining Subdivision (✅ Verified)
 
-**From NCCL source code** (`src/include/collectives.h` and `src/enqueue.cc`):
+**From NCCL source code** (`src/include/collectives.h` and `src/enqueue/enqueue.cc`):
 
 ```c
 // NCCL constants

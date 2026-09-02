@@ -269,6 +269,31 @@ int efa_reg_mr(struct ib_pd *ibpd, struct ib_mr *ibmr,
 - Unique per memory region
 - Used for validation at NIC level
 
+### Descriptors and `fi_mr_get_desc` (libfabric 2.7)
+
+The *descriptor* is the opaque token libfabric hands to data-path calls
+(`fi_send`, `fi_write`, …) that internally carries the lkey. It is obtained from
+a registered MR. Historically this was `fi_mr_desc(mr)`. libfabric 2.7 adds
+**`fi_mr_get_desc()`**, which can return a descriptor together with an **XPU
+context** (accelerator/GPU context) for the region. For EFA + GPU memory this
+lets the descriptor be associated with the correct device context rather than
+assuming a single default context, which matters on hosts with multiple GPUs or
+mixed HMEM interfaces. On EFA the underlying key semantics are unchanged
+(`lkey == rkey`); `fi_mr_get_desc` only affects how the descriptor and its
+device context are produced, not the key value itself.
+
+### AH Cache and Key/AH Device Objects (EFA driver r3.3.0)
+
+Keys identify *memory regions*; address handles (AHs) identify *peers*. The
+r3.3.0 EFA kernel driver added an **AH cache** (an `rhashtable` keyed by
+`{pd, gid}`) so that AH device objects are reused across registrations to the
+same peer within a protection domain, instead of being recreated each time
+(`amzn-drivers/kernel/linux/efa/src/efa_ah_cache.c`). This is orthogonal to
+lkey/rkey generation but shares the same "device object created at registration
+/ connection time" cost model: caching the AH removes redundant device round
+trips on the connection path, just as the MR cache removes redundant
+registrations on the data path.
+
 ### Key Validation in Hardware
 
 ```

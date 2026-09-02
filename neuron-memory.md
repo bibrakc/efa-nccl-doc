@@ -69,7 +69,7 @@
    nccl_net_ofi_regMr(comm, neuron_ptr, size, NCCL_PTR_NEURON, &mhandle);
 
 3. OFI Plugin detects Neuron memory
-   // From nccl_ofi_interface_neuron.cpp:38
+   // From nccl_ofi_interface_neuron.cpp (getProperties_v4/v5)
    if (ofi_properties.hmem_support) {
        props->ptrSupport |= NCCL_PTR_NEURON;
    }
@@ -304,26 +304,55 @@ static ncclResult_t getProperties_v5(int dev_id, ncclNetProperties_v5_t* props)
         props->ptrSupport |= NCCL_PTR_NEURON;  // Enable Neuron memory
     }
 
-    // Global MR registration support
+    // Global MR registration support (fast global MR cache)
     props->regIsGlobal = ofi_properties.regIsGlobal;
 
     props->speed = ofi_properties.port_speed;
+    props->port = ofi_properties.port_number;
     props->latency = ofi_properties.latency;
     props->maxComms = ofi_properties.max_communicators;
+    props->maxRecvs = 1;  // No multi-recv support in Neuron as of now
+
+    props->max_write_inline_size = ofi_properties.max_write_inline_size;
+    props->max_mr_key_size = ofi_properties.max_mr_key_size;
+    props->rma_supported = ofi_properties.rma_supported;
 
     return ret;
 }
 
-// Neuron-specific plugin exports
+// The v4 export uses getProperties_v4(), which sets a smaller field set
+// (name/pciPath/guid/ptrSupport/speed/port/maxComms) on ncclNetProperties_v4_t.
+
+// Neuron-specific plugin exports.
+// The Neuron interface exports THREE net op-tables: v4, v5, and v6.
+// (Verified with grep -rn NCCL_OFI_EXPORT_SYMBOL src/nccl_ofi_interface_neuron.cpp)
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v6_t ncclNetPlugin_v6 = {
     .name = "AWS Libfabric",
-    .init = nccl_net_ofi_init_v6,
-    .devices = nccl_net_ofi_devices_v2,
+    .init = init_v5,
+    .fini = fini_v6,
+    .devices = devices_v2,
     .getProperties = getProperties_v5,
-    .regMr = nccl_net_ofi_regMr_v8,       // Standard registration
-    .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf_v6,  // Not used for Neuron
-    // ... other functions
+    .listen = listen_v5,
+    .connect = connect_v5,
+    .accept = accept_v5,
+    .regMr = regMr_v8,                 // Standard registration (ibv_reg_mr path)
+    .regMrDmaBuf = regMrDmaBuf_v6,     // Present, but Neuron uses P2P, not dmabuf
+    .deregMr = deregMr_v2,
+    .isend = isend_v5,
+    .irecv = irecv_v5,
+    .iflush = iflush_v5,
+    .test = test_v2,
+    .closeSend = closeSend_v2,
+    .closeRecv = closeRecv_v2,
+    .closeListen = closeListen_v2,
+    .getMrKey = get_mr_key_v5,
+    .iwrite = iwrite_v5,
+    .iwriteInline = iwrite_inline_v5,
+    .iread = iread_v5,
 };
+
+// Also exported: ncclNet_v5_t ncclNetPlugin_v5 and ncclNet_v4_t ncclNetPlugin_v4
+// (v5 lacks .fini and the RMA iwrite/iread entry points; v4 uses getProperties_v4).
 ```
 
 ## Page Alignment: Neuron vs CUDA
@@ -503,7 +532,19 @@ export NCCL_DEBUG=INFO
 4. **Symbol-based**: Uses `symbol_get()` to call Neuron driver functions
 5. Registration is still expensive (100-500 μs) - **MR caching critical**
 6. Performance similar to CUDA/ROCm once registered
-7. AWS-specific, works on trn1/inf1/inf2 instances
+7. AWS-specific, works on trn1/inf1/inf2 (and trn2) instances
+8. The Neuron interface exports **three** net op-tables — `ncclNetPlugin_v4`,
+   `ncclNetPlugin_v5`, `ncclNetPlugin_v6` — in
+   [src/nccl_ofi_interface_neuron.cpp](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_interface_neuron.cpp)
+
+### CI / hardware coverage and driver notes
+
+- **Trn2 testing enabled in CI** (commit `b3af487`, *".ci/aws: Enable Trn2 testing"*), so
+  the Neuron path is now exercised on Trainium2 in addition to earlier Trn/Inf generations.
+- **EFA driver r3.3.0** adds >4GB MR page-size support and an extended page-shift field in MR
+  registration (amzn-drivers `bf83e44`, `a1e35dc`). While Neuron registrations go through the
+  `neuron_p2p_*` path rather than dmabuf, the larger MR page-size support in the same driver
+  release benefits large registrations across memory types.
 
 **Related Documentation**:
 - [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) - CUDA/ROCm DMA-BUF approach (different!)
