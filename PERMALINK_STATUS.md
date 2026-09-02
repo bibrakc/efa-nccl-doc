@@ -105,6 +105,21 @@ inline by path instead: `lkey-rkey-explained.md`, `nccl-chunk-breakdown.md`,
 `optimization-opportunities.md`, `algorithms/nvls-tree-algorithm.md`,
 `algorithms/pat-algorithm.md`.
 
+## Cross-file consistency
+
+A fact corrected in one document must be corrected in **every** document that states it. The
+2026-09-01 refresh missed this: `dmabuf-gpu-memory.md` was corrected to say DMA-BUF is no longer
+gated by EFA hardware generation (the device-id check was removed in aws-ofi-nccl `0f285d5`),
+but `kernel-efa-driver.md` still claimed it was "gated off on EFA Gen 1–3" in two places. Fixed
+2026-09-02, along with two further errors in the same passage: a compile guard named
+`HAVE_IB_REG_USER_MR_DMABUF` that does not exist anywhere in amzn-drivers (the real macro is
+`HAVE_MR_DMABUF`), and a parenthetical calling `nvidia_p2p` "a.k.a. nvidia-peermem" — they are
+different mechanisms and EFA uses only the former.
+
+So: after correcting any fact, grep the whole corpus for the old claim before committing. A
+single-file check will not catch this class of error, and parallel editors working on disjoint
+file sets will reliably produce it.
+
 ## Re-verifying
 
 The invariants above are checkable without network access, against local clones of the

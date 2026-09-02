@@ -23,7 +23,28 @@ Source links use branch-form URLs so they always land on current code; see
 
 Verified 2026-09-01.
 
+### Source Repositories
+
+Each layer lives in a separate repo. [stack-map.md](stack-map.md) has the full picture —
+what is in each, what to ignore, and where the clones live.
+
+| Layer | Repo | Owner |
+| --- | --- | --- |
+| NCCL | [NVIDIA/nccl](https://github.com/NVIDIA/nccl) | upstream |
+| OFI plugin | [aws/aws-ofi-nccl](https://github.com/aws/aws-ofi-nccl) | **ECT** |
+| Fabric abstraction + EFA provider | [ofiwg/libfabric](https://github.com/ofiwg/libfabric) | upstream |
+| Userspace verbs | [linux-rdma/rdma-core](https://github.com/linux-rdma/rdma-core) | upstream |
+| EFA kernel driver, `efa_nv_peermem` | [amzn/amzn-drivers](https://github.com/amzn/amzn-drivers) | AWS |
+| NVIDIA GPU kernel modules, `nv-p2p` | [NVIDIA/open-gpu-kernel-modules](https://github.com/NVIDIA/open-gpu-kernel-modules) | upstream |
+| Env var / tuner reference | [aws/aws-ofi-nccl.wiki](https://github.com/aws/aws-ofi-nccl/wiki) | **ECT** |
+
 ## Documentation Structure
+
+### Orientation
+
+- **[stack-map.md](stack-map.md)** - Which repo owns which layer, where each clone lives, what
+  matters inside each repo and what is noise, and the userspace/kernel boundary. **Read this
+  first if you need to go find or change source.**
 
 ### Core Concepts
 
@@ -88,6 +109,9 @@ Verified 2026-09-01.
 - **[dmabuf-gpu-memory.md](dmabuf-gpu-memory.md)** - DMA-BUF framework for vendor-neutral GPU memory registration
 - **[neuron-memory.md](neuron-memory.md)** - AWS Trainium/Inferentia with P2P registration (not dmabuf)
 - **[rocm-memory.md](rocm-memory.md)** - AMD ROCm with HIP API (CUDA-compatible)
+- **[gpu-memory-kernel-path.md](gpu-memory-kernel-path.md)** - The kernel side of GPU memory
+  registration: NVIDIA `nv-p2p`, the AWS `efa_nv_peermem` GPL shim, why EFA does **not** use
+  `nvidia-peermem`, and how the driver picks between DMA-BUF and the peer-memory providers
 
 ### Documentation Metadata
 

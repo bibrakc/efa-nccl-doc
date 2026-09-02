@@ -28,9 +28,11 @@ adapter (Nitro-class hardware):
   the SRD state machine itself is not in any open source.
 - **Hardware/ASIC** — the NIC silicon and its DMA engines.
 
-Practical consequence: behaviors like the **Gen 1–3 DMA-BUF page-merging issue** are
-firmware characteristics observable from the driver, not bugs fixable in the open driver
-source. When debugging, the open code tells you *what was requested of the device*; the
+Practical consequence: behaviours like the **historical Gen 1–3 DMA-BUF page-merging issue**
+are firmware characteristics observable from the driver, not bugs fixable in the open driver
+source. (That particular one no longer gates DMA-BUF — the device-id check was removed in
+aws-ofi-nccl `0f285d5` — but it remains a good example of the class.) When debugging, the open
+code tells you *what was requested of the device*; the
 device's internal handling is inferred from completions, counters, and errors.
 
 ## What's New in EFA Driver r3.3.0
@@ -302,7 +304,7 @@ struct ib_mr *efa_reg_mr(struct ib_pd *ibpd, u64 start, u64 length,
 }
 
 // DMA-BUF memory registration (GPU memory)
-#ifdef HAVE_IB_REG_USER_MR_DMABUF
+#ifdef HAVE_MR_DMABUF
 struct ib_mr *efa_reg_user_mr_dmabuf(struct ib_pd *ibpd, u64 start, u64 length,
                                      u64 virt_addr, int dmabuf_fd,
                                      int access_flags, struct ib_udata *udata)
@@ -352,7 +354,7 @@ int efa_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)  // ([kernel/linux/
     efa_com_dereg_mr(&dev->edev, &params);
 
     // 2. Clean up dmabuf (if applicable)
-#ifdef HAVE_IB_REG_USER_MR_DMABUF
+#ifdef HAVE_MR_DMABUF
     if (mr->dmabuf) {
         dma_buf_unmap_attachment(mr->dmabuf_attach, mr->dmabuf_sgt,
                                 DMA_BIDIRECTIONAL);
@@ -509,11 +511,23 @@ a pointer that the other driver may already be freeing.
 
 1. **DMA-BUF** (`efa_reg_user_mr_dmabuf`, see below): the modern, vendor-neutral path.
    Userspace passes a `dmabuf_fd`; the driver attaches and maps it through the kernel
-   `dma_buf` framework. No EFA-specific peer provider is involved. Requires
-   `HAVE_IB_REG_USER_MR_DMABUF` and a working exporter (and is gated off on EFA Gen 1–3
-   due to a firmware page-merging issue — see `dmabuf-gpu-memory.md`).
+   `dma_buf` framework. No EFA-specific peer provider is involved. Compiled under
+   `HAVE_MR_DMABUF` (with `HAVE_IB_UMEM_DMABUF_PINNED` selecting the pinned-import variant)
+   and requires a working exporter. **Not gated by EFA hardware generation** — the device-id
+   check that used to disable DMA-BUF on Gen 1–3 over a firmware page-merging issue was
+   removed in aws-ofi-nccl commit `0f285d5` ("dma-buf: Don't disable dma-buf on EFAv1-3").
+   See [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md).
 2. **Peer-memory providers** (this subsystem): the legacy/vendor path used when DMA-BUF
-   is unavailable — NVIDIA `nvidia_p2p` (a.k.a. nvidia-peermem) or Neuron `neuron_p2p`.
+   is unavailable — NVIDIA `nvidia_p2p` or Neuron `neuron_p2p`.
+
+   > **`nvidia_p2p` is not `nvidia-peermem`.** These are different mechanisms and conflating
+   > them sends you to the wrong place when debugging. EFA calls the `nvidia_p2p_*` functions
+   > from `nv-p2p.h` directly (or through the AWS `efa_nv_peermem` GPL shim).
+   > `nvidia-peermem.ko` is NVIDIA's *separate* bridge that registers with
+   > `ib_register_peer_memory_client()`, the MLNX_OFED peer-direct interface — an API that is
+   > not in mainline `ib_core`. The EFA driver contains **zero** references to
+   > `peer_memory_client`, and does not need `nvidia-peermem` loaded.
+   > See [gpu-memory-kernel-path.md](gpu-memory-kernel-path.md).
 
 libfabric's EFA provider chooses DMA-BUF when viable and falls back to the peer-memory
 path otherwise; both ultimately produce a device-page DMA list that the same `reg_mr`
@@ -759,7 +773,7 @@ struct efa_mr {  // ([kernel/linux/efa/src/efa.h:149-157](https://github.com/amz
     struct ib_umem *umem;                 // Pinned user pages
     struct efa_mr_pbl pbl;                // Page buffer list
 
-#ifdef HAVE_IB_REG_USER_MR_DMABUF
+#ifdef HAVE_MR_DMABUF
     struct dma_buf *dmabuf;               // DMA-BUF object (if GPU memory)
     struct dma_buf_attachment *dmabuf_attach;
     struct sg_table *dmabuf_sgt;

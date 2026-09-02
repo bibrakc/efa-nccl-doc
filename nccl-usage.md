@@ -133,7 +133,7 @@ NCCL provides three primary methods for creating communicators:
 ncclResult_t ncclCommInitAll(ncclComm_t* comm, int ndev, const int* devlist);
 ```
 
-**Example:** [nccl/examples/01_communicators/01_multiple_devices_single_process/main.cc:168](https://github.com/NVIDIA/nccl/tree/master/examples)
+**Example:** [nccl/docs/examples/01_communicators/01_multiple_devices_single_process/main.cc:168](https://github.com/NVIDIA/nccl/tree/master/docs/examples)
 ```c
 // Single process manages all GPUs
 ncclComm_t comms[8];
@@ -263,7 +263,7 @@ Multiple operations enable complex communication patterns:
 
 **Example: Gradient Aggregation in Distributed Training**
 ```c
-// Example from nccl/examples/03_collectives/01_allreduce/main.cc:125-135
+// Example from nccl/docs/examples/03_collectives/01_allreduce/main.cc:125-135
 // All operations use the same communicator but different data
 
 // 1. AllReduce gradients for layer 1
@@ -320,7 +320,7 @@ NCCL_API(ncclResult_t, ncclGroupEnd) {
 
 **Example: Multi-GPU Operations Without Deadlock**
 ```c
-// From nccl/examples/01_communicators/01_multiple_devices_single_process/main.cc:170-180
+// From nccl/docs/examples/01_communicators/01_multiple_devices_single_process/main.cc:170-180
 ncclGroupStart();
 for (int i = 0; i < num_gpus; i++) {
   cudaSetDevice(devices[i]);
@@ -751,7 +751,7 @@ def setup_communicators(rank, world_size):
 
 ### 2. Hierarchical AllReduce
 
-**Source:** [nccl/examples/msccl/hierarchical_allreduce.cu](https://github.com/microsoft/msccl/blob/main/examples/hierarchical_allreduce.cu)
+**Source:** [nccl/docs/examples/msccl/hierarchical_allreduce.cu](https://github.com/microsoft/msccl/blob/main/examples/hierarchical_allreduce.cu)
 
 ```c
 // Two-level hierarchy: local + cross-node
@@ -855,6 +855,6 @@ export NCCL_DEBUG_SUBSYS=INIT,COMM  # Detailed comm debug
 ## References
 
 - NCCL Source: https://github.com/NVIDIA/nccl
-- NCCL Examples: https://github.com/NVIDIA/nccl/tree/master/examples
+- NCCL Examples: https://github.com/NVIDIA/nccl/tree/master/docs/examples
 - AWS OFI NCCL: https://github.com/aws/aws-ofi-nccl
 - NCCL Documentation: https://docs.nvidia.com/deeplearning/nccl/
