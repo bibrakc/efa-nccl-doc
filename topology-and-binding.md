@@ -1,5 +1,7 @@
 # Topology Detection and Interface Binding in OFI NCCL Plugin
 
+> **Source lookups:** this document records mechanism, defaults, corrections and history. For current function bodies, call graphs and blast radius, query the code graph (`codegraph explore <symbol>`) rather than trusting a pasted copy here.
+
 ## Overview
 
 This document describes how the OFI NCCL plugin detects network devices (EFA adapters), discovers system topology, and binds to appropriate interfaces. These mechanisms are critical for:
@@ -34,19 +36,15 @@ filter would drop **every** NIC and leave the plugin with nothing to use.
 
 The decision is computed once, up front, by
 `any_nic_has_accel_at_same_level()` and passed down as `apply_skip_filter` so
-the counting pass and the populate pass agree
-([nccl_ofi_topo.cpp:433-521](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_topo.cpp)):
+the counting pass and the populate pass agree.
 
-```c
-// get_info_for_node(): only skip a NIC when the caller has determined
-// the filter is safe to apply (param enabled AND at least one NIC has an
-// accelerator at the same PCI level). Otherwise skipping would remove every
-// NIC in the system.
-if (apply_skip_filter && !has_accel_at_same_level(node)) {
-    return 0;   // filtered out
-}
-return match_info_for_node(node, info_list, ret_info);
-```
+> Source: `src/nccl_ofi_topo.cpp` — `get_info_for_node()`, `any_nic_has_accel_at_same_level()`. Use `codegraph explore get_info_for_node` for the current body.
+
+A NIC is filtered out (`get_info_for_node` returns early) only when
+`apply_skip_filter` is set **and** the node has no accelerator at the same PCI
+level; otherwise it is matched normally. `apply_skip_filter` is set only when the
+param is enabled and at least one NIC has a same-level accelerator, so the filter
+can never remove every NIC.
 
 Net behavior:
 - **Some NICs have a same-level accelerator:** those NICs are preferred; NICs
@@ -89,6 +87,10 @@ Points worth noting for an agent:
   unit test `tests/unit/aws_platform_mapper.cpp` asserts exactly this opt-in set.
 - **P5/P5e/P5en/P6 and later default to the RDMA protocol**; P4d/P4de/P3dn and
   the G5/G7e.8xlarge entries default to SENDRECV.
+- **`p4d` is *not* a recognized OFI-tuner platform.** The table above is the
+  `platform-aws.cpp` per-instance *default* map; the separate OFI tuner has its
+  own, narrower platform set that does not include p4d. Recognition here (for
+  BUFFSIZE/protocol defaults) does not imply the tuner recognizes it.
 
 ## Device Discovery
 
@@ -98,32 +100,16 @@ When NCCL initializes, it calls into the OFI plugin to discover available networ
 
 #### `ncclNet->devices()` - Device Count
 
+> Source: `src/nccl_ofi_net.cpp` — `nccl_net_ofi_devices()`. Use `codegraph explore nccl_net_ofi_devices` for the current body.
+
+The count comes from a libfabric query for the `efa` provider with an RDM
+endpoint. The idiom, with the version macro corrected for **libfabric 2.7**:
+
 ```c
-ncclResult_t nccl_net_ofi_devices(int* ndev)
-{
-  // Query libfabric for available EFA devices
-  struct fi_info* hints = fi_allocinfo();
-  hints->fabric_attr->prov_name = strdup("efa");
-  hints->ep_attr->type = FI_EP_RDM;
-
-  struct fi_info* info_list;
-  ret = fi_getinfo(FI_VERSION(1, 14), NULL, NULL, 0, hints, &info_list);
-
-  // Count devices
-  int count = 0;
-  for (struct fi_info* info = info_list; info; info = info->next) {
-    if (info->domain_attr && info->domain_attr->name) {
-      count++;
-    }
-  }
-
-  // Store globally
-  g_nccl_ofi_devices = count;
-  g_nccl_ofi_info_list = info_list;
-
-  *ndev = count;
-  return ncclSuccess;
-}
+hints->fabric_attr->prov_name = strdup("efa");
+hints->ep_attr->type = FI_EP_RDM;
+fi_getinfo(FI_VERSION(2, 7), NULL, NULL, 0, hints, &info_list);
+// one fi_info per EFA device; count those with a domain_attr->name
 ```
 
 **What libfabric returns:**
@@ -143,51 +129,19 @@ Device 3: rdmap3s0 (efa_3)
 
 For each device, NCCL queries properties to build topology:
 
-```c
-ncclResult_t nccl_net_ofi_getProperties(int dev,
-                                        ncclNetProperties_t* props)
-{
-  // Get the fi_info for this device
-  struct fi_info* info = get_device_info(dev);
+> Source: `src/nccl_ofi_net.cpp` — `nccl_net_ofi_getProperties()`. Use `codegraph explore nccl_net_ofi_getProperties` for the current body.
 
-  // === 1. Device Name ===
-  props->name = strdup("AWS EFA");
-
-  // === 2. PCI Path (Critical for Topology) ===
-  // Extract PCI address from device
-  // Format: "0000:00:06.0" (domain:bus:device.function)
-  char pci_path[256];
-  ret = get_pci_path_from_device(info, pci_path, sizeof(pci_path));
-  props->pciPath = strdup(pci_path);
-
-  // === 3. GUID (Globally Unique ID) ===
-  // Use device address or generate from PCI path
-  props->guid = generate_guid(info);
-
-  // === 4. Pointer Support ===
-  // EFA supports both host and GPU memory
-  props->ptrSupport = NCCL_PTR_HOST | NCCL_PTR_CUDA;
-
-  // === 5. Speed ===
-  // Link speed in Mbps
-  props->speed = 100000;  // 100 Gbps for EFA
-
-  // === 6. Port ===
-  props->port = 0;  // Single port per EFA
-
-  // === 7. Max Communicators ===
-  // How many concurrent connections this device supports
-  props->maxComms = 1024;
-
-  // === 8. Latency (optional) ===
-  props->latency = 10.0;  // ~10 μs base latency
-
-  // === 9. Max Receive Size ===
-  props->maxRecvs = 1;  // Receive batching support
-
-  return ncclSuccess;
-}
-```
+The property values the plugin reports (the fields that matter for topology and
+sizing) include:
+- `name` — `"AWS EFA"`
+- `pciPath` — PCI address string (see below); **the key field for topology**
+- `guid` — from device address / PCI path
+- `ptrSupport` — `NCCL_PTR_HOST | NCCL_PTR_CUDA`
+- `speed` — link speed in Mbps (see [efa-hardware-architecture.md](efa-hardware-architecture.md) for actual EFA link speeds)
+- `port` — `0` (single port per EFA)
+- `maxComms` — concurrent connections supported
+- `latency` — base latency estimate (μs); overridden per-platform in `platform-aws.cpp`
+- `maxRecvs` — receive-batching count
 
 **Critical Field: `pciPath`**
 
@@ -204,75 +158,23 @@ Domain:Bus:Device.Function
 
 ### Extracting PCI Path from Device
 
-Different methods depending on the system:
+The plugin resolves a device's PCI address by one of these means (see
+`src/nccl_ofi_topo.cpp`; use `codegraph explore` for current bodies):
 
-#### Method 1: From libfabric device attributes
-
-```c
-int get_pci_path_from_device(struct fi_info* info, char* pci_path, size_t len)
-{
-  // Some providers expose PCI info directly
-  if (info->nic && info->nic->device_attr) {
-    struct fi_pci_attr* pci = &info->nic->device_attr->pci;
-    snprintf(pci_path, len, "%04x:%02x:%02x.%x",
-             pci->domain_id,
-             pci->bus_id,
-             pci->device_id,
-             pci->function_id);
-    return 0;
-  }
-
-  // Fallback to other methods
-  return get_pci_path_from_sysfs(info, pci_path, len);
-}
-```
-
-#### Method 2: From sysfs
-
-```c
-int get_pci_path_from_sysfs(struct fi_info* info, char* pci_path, size_t len)
-{
-  // EFA devices appear in sysfs
-  // /sys/class/infiniband/efa_X/device -> ../../devices/pci0000:00/0000:00:06.0
-
-  char device_name[256];
-  snprintf(device_name, sizeof(device_name),
-           "/sys/class/infiniband/%s/device",
-           info->domain_attr->name);
-
-  char link_target[512];
-  ssize_t link_len = readlink(device_name, link_target, sizeof(link_target) - 1);
-  if (link_len < 0) {
-    return -1;
-  }
-  link_target[link_len] = '\0';
-
-  // Extract PCI path from symlink target
-  // Example: "../../devices/pci0000:00/0000:00:06.0"
-  char* pci_ptr = strrchr(link_target, '/');
-  if (pci_ptr) {
-    strncpy(pci_path, pci_ptr + 1, len);
-    return 0;
-  }
-
-  return -1;
-}
-```
-
-#### Method 3: Parse from device address
-
-```c
-int get_pci_path_from_address(struct fi_info* info, char* pci_path, size_t len)
-{
-  // EFA device names often encode PCI info
-  // Example: "rdmap0s0" might be on bus 0
-
-  // Query via ioctl or parse device properties
-  // Implementation varies by provider
-
-  return -1;
-}
-```
+1. **From libfabric** — when `info->nic->device_attr` is present, format
+   `info->nic->device_attr->pci` as `domain:bus:device.function`:
+   ```c
+   snprintf(pci_path, len, "%04x:%02x:%02x.%x",
+            pci->domain_id, pci->bus_id, pci->device_id, pci->function_id);
+   ```
+2. **From sysfs** — read the symlink for the IB device; its target ends in the
+   PCI address:
+   ```bash
+   readlink /sys/class/infiniband/<efa_dev>/device
+   # -> ../../devices/pci0000:00/0000:00:06.0
+   ```
+3. **From the device address** — some EFA device names encode PCI info
+   (`rdmap0s0`); provider-dependent fallback.
 
 ## Topology Detection
 
@@ -315,69 +217,23 @@ NCCL Topology Building:
 
 ### PCI Topology Parsing
 
-**`struct pci_location`** - PCI device location (internal helper structure for topology parsing):
+A PCI address `domain:bus:device.function` is parsed with
+`sscanf(pci_path, "%hx:%hhx:%hhx.%hhx", ...)`. Affinity is modeled as a distance
+where lower means closer (conceptual tiers used to rank NIC↔GPU proximity):
 
-```c
-struct pci_location {
-  uint16_t domain;
-  uint8_t bus;
-  uint8_t device;
-  uint8_t function;
-};
-
-int parse_pci_path(const char* pci_path, struct pci_location* loc)
-{
-  int ret = sscanf(pci_path, "%hx:%hhx:%hhx.%hhx",
-                   &loc->domain, &loc->bus,
-                   &loc->device, &loc->function);
-  return (ret == 4) ? 0 : -1;
-}
-
-int compute_pci_distance(struct pci_location* a, struct pci_location* b)
-{
-  // Same device
-  if (a->domain == b->domain && a->bus == b->bus &&
-      a->device == b->device && a->function == b->function) {
-    return 0;
-  }
-
-  // Same bus (likely same PCIe switch)
-  if (a->domain == b->domain && a->bus == b->bus) {
-    return 10;
-  }
-
-  // Same domain (same NUMA node, different PCIe tree)
-  if (a->domain == b->domain) {
-    return 50;
-  }
-
-  // Different domain (different NUMA node)
-  return 100;
-}
+```
+same domain+bus+device+function  → 0    (same device)
+same domain+bus                  → 10   (likely same PCIe switch)
+same domain                      → 50   (same NUMA, different PCIe tree)
+different domain                 → 100  (different NUMA node)
 ```
 
 ### NUMA Topology Integration
 
-```c
-int get_numa_node_from_pci(const char* pci_path)
-{
-  // Read from sysfs
-  char path[512];
-  snprintf(path, sizeof(path),
-           "/sys/bus/pci/devices/%s/numa_node",
-           pci_path);
+A device's NUMA node is read from sysfs:
 
-  FILE* f = fopen(path, "r");
-  if (!f) {
-    return -1;  // NUMA info not available
-  }
-
-  int numa_node;
-  fscanf(f, "%d", &numa_node);
-  fclose(f);
-
-  return numa_node;
-}
+```bash
+cat /sys/bus/pci/devices/<XXXX:XX:XX.X>/numa_node   # -1 if unavailable
 ```
 
 **Example NUMA topology (p4d.24xlarge):**
@@ -405,13 +261,11 @@ NUMA Node 1:
 
 #### 1. Round-Robin (Default)
 
-```c
-int select_device_round_robin(int channel_id, int num_devices)
-{
-  // Simple round-robin distribution
-  return channel_id % num_devices;
-}
-```
+Round-robin rail assignment is the **built-in default** — a channel is mapped to
+`channel_id % num_devices`. There is **no environment knob** for it:
+`OFI_EFA_ROUND_ROBIN_HASH` does **not** exist (the code graph cannot show the
+absence of a param, so it is recorded here). Round-robin is simply what the
+plugin does when no stronger affinity constraint applies.
 
 **Example with 8 channels, 4 EFAs:**
 ```
@@ -427,33 +281,11 @@ Channel 7 → EFA 3
 
 #### 2. GPU Affinity-Based
 
-```c
-int select_device_by_gpu_affinity(int gpu_id, int num_devices)
-{
-  // Get GPU's PCI location
-  char gpu_pci_path[256];
-  cudaDeviceGetPCIBusId(gpu_pci_path, sizeof(gpu_pci_path), gpu_id);
+Pick the NIC with the smallest `compute_pci_distance` to the GPU's PCI location
+(from `cudaDeviceGetPCIBusId`):
 
-  struct pci_location gpu_loc;
-  parse_pci_path(gpu_pci_path, &gpu_loc);
-
-  // Find closest NIC
-  int best_dev = 0;
-  int min_distance = INT_MAX;
-
-  for (int dev = 0; dev < num_devices; dev++) {
-    struct pci_location nic_loc;
-    parse_pci_path(device_pci_paths[dev], &nic_loc);
-
-    int distance = compute_pci_distance(&gpu_loc, &nic_loc);
-    if (distance < min_distance) {
-      min_distance = distance;
-      best_dev = dev;
-    }
-  }
-
-  return best_dev;
-}
+```
+best = argmin over dev of pci_distance(gpu_loc, nic_loc[dev])
 ```
 
 **Example result:**
@@ -466,31 +298,12 @@ GPU 3 (NUMA 1) → EFA 3 (NUMA 1)  ← Local
 
 #### 3. NUMA-Aware Selection
 
-```c
-int select_device_numa_aware(int gpu_id, int num_devices)
-{
-  // Get GPU's NUMA node
-  int gpu_numa = get_gpu_numa_node(gpu_id);
+Filter NICs to those on the GPU's NUMA node, then round-robin among them; if none
+are local, fall back to plain round-robin over all devices:
 
-  // Filter devices on same NUMA node
-  int local_devices[MAX_DEVICES];
-  int num_local = 0;
-
-  for (int dev = 0; dev < num_devices; dev++) {
-    int nic_numa = get_numa_node_from_pci(device_pci_paths[dev]);
-    if (nic_numa == gpu_numa) {
-      local_devices[num_local++] = dev;
-    }
-  }
-
-  if (num_local > 0) {
-    // Round-robin among local devices
-    return local_devices[gpu_id % num_local];
-  } else {
-    // No local devices, fall back to round-robin
-    return gpu_id % num_devices;
-  }
-}
+```
+local = [dev : numa(dev) == numa(gpu)]
+return local ? local[gpu_id % len(local)] : gpu_id % num_devices
 ```
 
 ### Environment Variable Controls
@@ -513,28 +326,9 @@ NCCL_SOCKET_IFNAME=^docker,lo
 NCCL_SOCKET_IFNAME=rdma0,rdma1,rdma2,rdma3
 ```
 
-**Plugin implementation:**
-```c
-int is_interface_allowed(const char* ifname)
-{
-  const char* filter = getenv("NCCL_SOCKET_IFNAME");
-  if (!filter) {
-    return 1;  // No filter, allow all
-  }
-
-  // Parse filter
-  // "^docker,lo" means exclude docker*, lo
-  // "eth0,eth1" means include only eth0, eth1
-
-  if (filter[0] == '^') {
-    // Exclusion mode
-    return !matches_pattern(ifname, filter + 1);
-  } else {
-    // Inclusion mode
-    return matches_pattern(ifname, filter);
-  }
-}
-```
+**Plugin implementation:** with no `NCCL_SOCKET_IFNAME` set, all interfaces are
+allowed. A leading `^` means exclusion (drop names matching the pattern);
+otherwise it is inclusion (keep only names matching the pattern).
 
 #### `NCCL_IB_HCA` (for EFA)
 
@@ -564,52 +358,21 @@ Controls GPU-NIC affinity level:
 NCCL_NET_GDR_LEVEL=LOC  # Prefer local NUMA NICs
 ```
 
-**Plugin uses this to filter devices:**
-```c
-int filter_devices_by_gdr_level(int gpu_id, int* devices, int num_devices)
-{
-  int gdr_level = get_gdr_level_from_env();  // Default: LOC (5)
+**Plugin uses this to filter devices:** keep only NICs whose computed affinity
+level is at least as close as the requested `gdr_level` (default LOC = 5):
 
-  int filtered[MAX_DEVICES];
-  int num_filtered = 0;
-
-  for (int i = 0; i < num_devices; i++) {
-    int dev = devices[i];
-
-    // Check affinity level
-    int affinity = compute_affinity_level(gpu_id, dev);
-
-    if (affinity <= gdr_level) {
-      filtered[num_filtered++] = dev;
-    }
-  }
-
-  // Copy back
-  memcpy(devices, filtered, num_filtered * sizeof(int));
-  return num_filtered;
-}
+```
+keep dev where compute_affinity_level(gpu_id, dev) <= gdr_level
 ```
 
 ### Dynamic Device Selection During Runtime
 
 #### Per-Connection Selection
 
-When NCCL creates a connection, the plugin selects a device:
+When NCCL creates a connection, the plugin creates an endpoint on the device NCCL
+selected (NCCL passes `dev` based on its own topology detection):
 
-```c
-ncclResult_t nccl_net_ofi_connect(int dev, void* handle, void** sendComm)
-{
-  // 'dev' is passed by NCCL based on its topology detection
-
-  // Get the fi_info for this device
-  struct fi_info* info = g_nccl_ofi_devices[dev];
-
-  // Create endpoint on selected device
-  fi_endpoint(domain, info, &ep, NULL);
-
-  // ... rest of connection setup ...
-}
-```
+> Source: `src/nccl_ofi_net.cpp` — `nccl_net_ofi_connect()`. Use `codegraph explore nccl_net_ofi_connect` for the current body.
 
 **How NCCL chooses `dev`:**
 1. Build topology graph from PCI paths
@@ -619,60 +382,25 @@ ncclResult_t nccl_net_ofi_connect(int dev, void* handle, void** sendComm)
 
 #### Multi-Rail Channel Distribution
 
-```c
-// NCCL's channel distribution logic (conceptual)
-void distribute_channels_to_nics(int num_channels, int num_nics)
-{
-  for (int ch = 0; ch < num_channels; ch++) {
-    // Get GPU associated with this channel
-    int gpu_id = get_channel_gpu(ch);
+NCCL's channel distribution (conceptual): for each channel, take the channel's
+GPU, filter NICs by affinity to it, then load-balance the channel across the
+available NICs:
 
-    // Get NICs with good affinity to this GPU
-    int available_nics[MAX_NICS];
-    int num_avail = filter_by_affinity(gpu_id, available_nics, num_nics);
-
-    // Load balance across available NICs
-    int nic_idx = ch % num_avail;
-    int selected_nic = available_nics[nic_idx];
-
-    // Assign channel to NIC
-    channel_to_nic[ch] = selected_nic;
-  }
-}
+```
+for ch in channels:
+    avail = filter_by_affinity(gpu_of(ch), nics)
+    channel_to_nic[ch] = avail[ch % len(avail)]
 ```
 
 ## Topology Information Export
 
 ### Plugin Exposes Topology via Properties
 
-NCCL uses the properties to build its internal topology:
-
-```c
-// NCCL internal (conceptual)
-void build_network_topology()
-{
-  int num_nics;
-  ncclNet->devices(&num_nics);
-
-  for (int nic = 0; nic < num_nics; nic++) {
-    ncclNetProperties_t props;
-    ncclNet->getProperties(nic, &props);
-
-    // Add to topology graph
-    add_network_node(nic, props.pciPath, props.speed);
-  }
-
-  // Combine with GPU topology
-  for (int gpu = 0; gpu < num_gpus; gpu++) {
-    char pci_path[256];
-    cudaDeviceGetPCIBusId(pci_path, sizeof(pci_path), gpu);
-    add_gpu_node(gpu, pci_path);
-  }
-
-  // Compute shortest paths, affinities, etc.
-  compute_topology_graph();
-}
-```
+NCCL uses the plugin's properties to build its internal topology: it calls
+`devices()` then `getProperties(nic)` for each NIC (adding a node keyed by
+`pciPath`/`speed`), combines those with GPU nodes discovered via
+`cudaDeviceGetPCIBusId`, and computes shortest paths / affinities across the
+combined graph.
 
 ### Custom Topology XML (Advanced)
 

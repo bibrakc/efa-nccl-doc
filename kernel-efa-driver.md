@@ -12,7 +12,7 @@ The **EFA kernel driver** is a Linux kernel module that provides the interface b
 authoritative change list in
 [RELEASENOTES.md](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/RELEASENOTES.md)).
 
-> **Source lookups:** this document explains mechanism and records defaults, corrections and history. For current function bodies, call graphs and blast radius, query the code graph (`codegraph explore <symbol>`) rather than trusting a pasted copy here.
+> **Source lookups:** this document records mechanism, defaults, corrections and history. For current function bodies, call graphs and blast radius, query the code graph (`codegraph explore <symbol>`) rather than trusting a pasted copy here.
 
 ### Firmware and Hardware Boundary (what is open vs closed)
 
@@ -536,6 +536,65 @@ cat /sys/class/infiniband/efa_0/ports/1/counters/*
 - **Queue depth** — limits outstanding operations.
 - **Doorbell rate** — MMIO overhead grows with rings/sec (batch WQEs before ringing).
 - **Memory registration** — expensive without a registration cache.
+
+### Latency component breakdown (small message, one-way)
+
+```
+User Space Operation         Time
+─────────────────────────────────────
+ibv_post_send()              ~100 ns  (build WQE ~50 ns + MMIO doorbell ~50 ns)
+
+Hardware Processing          Time
+─────────────────────────────────────
+WQE fetch                    ~200 ns
+DMA read (source buffer)     ~500 ns  (size-dependent)
+Packet formation             ~100 ns
+Network transmission         ~10-20 μs (one-way)
+
+Completion                   Time
+─────────────────────────────────────
+Write CQE                    ~100 ns
+ibv_poll_cq()                ~100 ns
+
+Total (small message):       ~10-15 μs (one-way)
+```
+
+### Single-QP bandwidth by message size
+
+| Message size | Single QP | Notes |
+|--------------|-----------|-------|
+| < 4 KB | ~1-2 GB/s | latency-bound |
+| 64 KB | ~8-10 GB/s | |
+| > 1 MB | ~11-12 GB/s | approaching PCIe/QP ceiling |
+| 4-8 QPs (aggregate) | ~40-50 GB/s | PCIe-limited, not NIC-limited |
+
+### Doorbell overhead vs ring rate
+
+| Doorbells / second | CPU impact |
+|--------------------|------------|
+| 1K | negligible |
+| 10K | ~1% |
+| 100K | ~5-10% |
+| 1M | ~50% |
+| 10M | ~100% (spinning) |
+
+Batching WQEs before ringing the doorbell is the primary mitigation.
+
+### Multi-rail (multiple EFAs per instance)
+
+```
+┌──────────────────────────────────┐
+│  Application                     │
+└───┬─────────┬─────────┬──────────┘
+    │         │         │
+┌───▼───┐ ┌───▼───┐ ┌───▼───┐
+│ EFA 0 │ │ EFA 1 │ │ EFA 2 │
+└───┬───┘ └───┬───┘ └───┬───┘
+    └─────────┴─────────┴─→ Aggregate bandwidth
+```
+
+Bandwidth scales roughly linearly with rail count; NCCL automatically uses all EFAs.
+Example: 4 EFAs on p4d.24xlarge ≈ ~400 Gbps aggregate.
 
 ## Key Source Files
 

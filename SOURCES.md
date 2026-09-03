@@ -11,7 +11,6 @@ Three rules, applied uniformly across every document:
    `https://github.com/aws/aws-ofi-nccl/blob/master/...`, not `.../blob/d840aa1/...`.
    A commit-pinned link freezes the reader on a snapshot that gets staler every week;
    these docs exist to point at *current* code. The snapshot the docs were written
-   against is recorded once, in [PERMALINK_MAPPINGS.txt](PERMALINK_MAPPINGS.txt), so an
    exact permalink can still be reconstructed when a historical view is genuinely needed.
 
 2. **No `#L` line anchors in URLs.** Line anchors rot silently: after any refactor the
@@ -39,7 +38,6 @@ used `#L` anchors in roughly a sixth of them. All of that was normalized in the
 | `#L` line anchors remaining | **0** |
 | Internal `.md` / `.txt` cross-references that resolve | **282 / 282** |
 | Intra-doc heading anchors that resolve | **45 / 45** |
-| Symbol mappings in `PERMALINK_MAPPINGS.txt` with a live target file | **74 / 74** |
 
 Broken paths corrected during this refresh (upstream moved the files):
 
@@ -96,12 +94,12 @@ Counts are source links into upstream repos (not internal cross-references).
 | [topology-and-binding.md](topology-and-binding.md) | 5 | aws-ofi-nccl 5 |
 | [nccl-core.md](nccl-core.md) | 4 | nccl 4 |
 | [overview.md](overview.md) | 2 | libfabric 2 |
-| [rocm-memory.md](rocm-memory.md) | 2 | libfabric 2 |
-| [efa-driver.md](efa-driver.md) | 1 | amzn-drivers 1 |
-| [neuron-memory.md](neuron-memory.md) | 1 | aws-ofi-nccl 1 |
+| [accelerator-memory.md](accelerator-memory.md) | 2 | libfabric 2 |
+| [kernel-efa-driver.md](kernel-efa-driver.md) | 1 | amzn-drivers 1 |
+| [accelerator-memory.md](accelerator-memory.md) | 1 | aws-ofi-nccl 1 |
 
 Documents with no source links are derivation- or concept-oriented and cite code
-inline by path instead: `lkey-rkey-explained.md`, `nccl-chunk-breakdown.md`,
+inline by path instead: `lkey-rkey-explained.md`, `nccl-message-breakdown-complete.md`,
 `optimization-opportunities.md`, `algorithms/nvls-tree-algorithm.md`,
 `algorithms/pat-algorithm.md`.
 
@@ -139,7 +137,6 @@ linux-rdma/rdma-core  -> /home/bibracha/sw-stack/rdma-core
 ## Symbol Mappings
 
 Struct, class, and function name to source location mappings live in
-[PERMALINK_MAPPINGS.txt](PERMALINK_MAPPINGS.txt) (74 entries, all verified against the
 snapshot above). This is a **curated index of the symbols most often looked up, not a full
 symbol inventory** — kernel-driver types (`efa_dev`, `efa_qp`, `efa_cq`, `efa_mr`), the
 `efa_io_*` I/O descriptor structs, the `ibv_*` verbs structs and the EFA provider's

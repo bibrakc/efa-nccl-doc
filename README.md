@@ -10,7 +10,7 @@ This documentation provides in-depth coverage of the complete stack used for GPU
 
 Every claim in these documents was verified against the following upstream snapshot.
 Source links use branch-form URLs so they always land on current code; see
-[PERMALINK_STATUS.md](PERMALINK_STATUS.md) for the link policy and verification results.
+[SOURCES.md](SOURCES.md) for the link policy and verification results.
 
 | Component | Version | Commit |
 | --- | --- | --- |
@@ -22,6 +22,24 @@ Source links use branch-form URLs so they always land on current code; see
 | open-gpu-kernel-modules | 610.57.04 | `e4a5faa2` |
 
 Verified 2026-09-01.
+
+### Paired with a code graph
+
+This corpus is one half of a pair. Structural questions — where a symbol is, what calls it, what
+breaks if you change it — go to the **CodeGraph** MCP server, which is AST-derived and cannot
+drift. This corpus holds what a graph structurally cannot: **defaults**, **absences**, formulae,
+and history. It no longer paste-copies upstream function bodies; where you want the code, ask the
+graph.
+
+Three things the graph cannot answer, which is why this corpus exists:
+
+- **Our environment variables.** All 47 `OFI_NCCL_*` params come from the `OFI_NCCL_PARAM` macro,
+  so tree-sitter never registers them as symbols — `codegraph query eager_max_size` returns
+  nothing. Env vars were the largest error category this corpus has ever caught.
+- **Absence.** "EFA does not use `nvidia-peermem`" is evidenced by *zero* references.
+- **Cross-layer flow.** Measured against the index: the plugin's calls to `fi_send` / `ibv_reg_mr`
+  produce **zero** edges into libfabric or rdma-core (no preprocessor, no linker), while ~14k
+  *false* cross-repo edges exist from name collisions. Trust call graphs within one repo only.
 
 ### Source Repositories
 
@@ -67,8 +85,7 @@ what is in each, what to ignore, and where the clones live.
 
 - **[efa-hardware-architecture.md](efa-hardware-architecture.md)** - EFA queue pairs, completion queues, work queue entries, memory layout, hardware capabilities
 - **[srd-protocol.md](srd-protocol.md)** - Scalable Reliable Datagram protocol: multipath routing, congestion control, reliability mechanisms
-- **[efa-driver.md](efa-driver.md)** - EFA driver architecture, capabilities, and verbs surface exposed to userspace
-- **[kernel-efa-driver.md](kernel-efa-driver.md)** - Linux kernel EFA driver internals
+- **[kernel-efa-driver.md](kernel-efa-driver.md)** - Linux kernel EFA driver: architecture, verbs surface, admin queue, GPU peer memory, r3.3.0 changes, firmware boundary
 
 ### Transport Layer
 
@@ -95,8 +112,7 @@ what is in each, what to ignore, and where the clones live.
 - **[freelist-allocator.md](freelist-allocator.md)** - Freelist allocator for high-performance object pooling (estimated 20-100x faster than malloc)
 - **[mr-cache-implementation.md](mr-cache-implementation.md)** - Memory registration cache implementation details (approximately 25x speedup)
 - **[nccl-buffsize-explained.md](nccl-buffsize-explained.md)** - NCCL_BUFFSIZE environment variable, channel buffers, pipelining, and performance/memory tradeoffs
-- **[nccl-message-breakdown-complete.md](nccl-message-breakdown-complete.md)** - How NCCL breaks down messages for all collective operations
-- **[nccl-chunk-breakdown.md](nccl-chunk-breakdown.md)** - Chunk size calculation, pipeline depth, and EFA MTU packetization
+- **[nccl-message-breakdown-complete.md](nccl-message-breakdown-complete.md)** - How collectives decompose into messages, chunk/slice sizing, pipeline depth, EFA MTU packetization
 
 ### GIN and Expert Parallelism
 
@@ -107,16 +123,16 @@ what is in each, what to ignore, and where the clones live.
 
 - **[cuda-memory.md](cuda-memory.md)** - NVIDIA CUDA memory: dynamic loading, cross-version compatibility, GPUDirect, GDRCopy
 - **[dmabuf-gpu-memory.md](dmabuf-gpu-memory.md)** - DMA-BUF framework for vendor-neutral GPU memory registration
-- **[neuron-memory.md](neuron-memory.md)** - AWS Trainium/Inferentia with P2P registration (not dmabuf)
-- **[rocm-memory.md](rocm-memory.md)** - AMD ROCm with HIP API (CUDA-compatible)
+- **[accelerator-memory.md](accelerator-memory.md)** - Non-NVIDIA accelerator memory: AWS Trainium/Inferentia (Neuron `neuron_p2p_*`, **not** dmabuf) and AMD ROCm/HIP
 - **[gpu-memory-kernel-path.md](gpu-memory-kernel-path.md)** - The kernel side of GPU memory
   registration: NVIDIA `nv-p2p`, the AWS `efa_nv_peermem` GPL shim, why EFA does **not** use
   `nvidia-peermem`, and how the driver picks between DMA-BUF and the peer-memory providers
 
 ### Documentation Metadata
 
-- **[PERMALINK_STATUS.md](PERMALINK_STATUS.md)** - Source-link policy, the upstream snapshot these docs were verified against, and per-document link inventory
-- **[PERMALINK_MAPPINGS.txt](PERMALINK_MAPPINGS.txt)** - Struct/class/function name to source location mappings
+- **[REFRESHING.md](REFRESHING.md)** - How to refresh this corpus against upstream without degrading it
+
+- **[SOURCES.md](SOURCES.md)** - Source-link policy, the upstream snapshot these docs were verified against, and per-document link inventory
 
 ## Quick Start
 
@@ -143,7 +159,7 @@ Start with these documents in order:
 - **Topology and multi-NIC** → [topology-and-binding.md](topology-and-binding.md), [nccl-channels.md](nccl-channels.md)
 - **Understanding RDMA keys** → [lkey-rkey-explained.md](lkey-rkey-explained.md)
 - **Memory allocators & caching** → [freelist-allocator.md](freelist-allocator.md), [mr-cache-implementation.md](mr-cache-implementation.md)
-- **GPU memory registration** → [cuda-memory.md](cuda-memory.md), [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md), [neuron-memory.md](neuron-memory.md), [rocm-memory.md](rocm-memory.md)
+- **GPU memory registration** → [cuda-memory.md](cuda-memory.md), [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md), [accelerator-memory.md](accelerator-memory.md), [accelerator-memory.md](accelerator-memory.md)
 - **Kernel driver details** → [kernel-efa-driver.md](kernel-efa-driver.md)
 - **Userspace RDMA API** → [rdma-core-and-verbs.md](rdma-core-and-verbs.md)
 
@@ -284,7 +300,7 @@ scattered across documents.
   along with the ordering fixes that landed alongside it, but the default and the
   re-enable tradeoffs are now stated correctly.
 - **EFA kernel driver r3.3.0** documented in [kernel-efa-driver.md](kernel-efa-driver.md),
-  [efa-driver.md](efa-driver.md) and [efa-hardware-architecture.md](efa-hardware-architecture.md):
+  [kernel-efa-driver.md](kernel-efa-driver.md) and [efa-hardware-architecture.md](efa-hardware-architecture.md):
   Completion Counters (and why they matter for GPU-initiated paths), 64-bit work request
   IDs, 128-byte SQ WQEs, inline WRITE, the new `0xefa4` PCI device ID, 800/1600 Gbps link
   speed reporting plus the query-port-speed verb, admin response checksums, >4 GB MR page
@@ -333,10 +349,10 @@ scattered across documents.
   which does not rot silently. 46 pinned base URLs were converted, 66 anchors stripped, and
   **16 genuinely broken source paths** fixed (upstream file moves). Invariants are now
   machine-checked; the authoritative counts live in
-  [PERMALINK_STATUS.md](PERMALINK_STATUS.md) (every source link resolves to a file that
+  [SOURCES.md](SOURCES.md) (every source link resolves to a file that
   exists upstream, and every internal cross-reference, heading anchor and symbol mapping
   resolves).
-- **Index fixes**: [efa-driver.md](efa-driver.md) was missing from the documentation index;
+- **Index fixes**: [kernel-efa-driver.md](kernel-efa-driver.md) was missing from the documentation index;
   the metadata files are now listed too.
 - **Fabricated identifiers purged (independent audit round).** An exhaustive sweep of every
   `OFI_NCCL_*` / `FI_EFA_*` / `NCCL_*` / `FI_*` identifier in the doc set against the source

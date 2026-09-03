@@ -1,5 +1,7 @@
 # Memory Registration Cache Implementation
 
+> **Source lookups:** this document records mechanism, defaults, corrections and history. For current function bodies, call graphs and blast radius, query the code graph (`codegraph explore <symbol>`) rather than trusting a pasted copy here.
+
 ## Overview
 
 The OFI NCCL plugin implements a **custom memory registration (MR) cache** to avoid expensive re-registration of memory regions. This is one of the most critical performance optimizations in the plugin.
@@ -49,26 +51,12 @@ With cache (first operation registers, rest hit cache):
 
 ### Cache Entry
 
-```cpp
-/**
- * A memory registration cache entry
- * Stores one registered memory region with reference counting
- */
-struct nccl_ofi_reg_entry {                 // [include/nccl_ofi_mr.h:186-195](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_mr.h)
-    uintptr_t addr;         // Page-aligned base address
-    size_t pages;           // Number of pages covered
-    int refcnt;             // Reference count (how many users)
-    void *handle;           // fi_mr handle from libfabric
-    nccl_net_ofi_ep_t *ep;  // Endpoint that owns this MR
+> Source: `include/nccl_ofi_mr.h` — `struct nccl_ofi_reg_entry` / `nccl_ofi_reg_entry_t`. Use `codegraph explore nccl_ofi_reg_entry` for the current definition.
 
-    // Constructor initializes refcnt to 1 (the creating reference)
-    nccl_ofi_reg_entry(uintptr_t addr_arg, size_t pages_arg, void *handle_arg,
-                       nccl_net_ofi_ep_t *ep_arg)
-        : addr(addr_arg), pages(pages_arg), refcnt(1),
-          handle(handle_arg), ep(ep_arg) {}
-};
-typedef struct nccl_ofi_reg_entry nccl_ofi_reg_entry_t;
-```
+An entry stores one registered region: page-aligned base `addr`, `pages`
+(page count, not bytes), `refcnt`, the `void *handle` (fi_mr handle), and the
+owning `nccl_net_ofi_ep_t *ep`. **The constructor sets `refcnt = 1`** — a freshly
+inserted entry already holds one reference.
 
 **Key Design Decisions**:
 - **Page-aligned**: `addr` is always aligned to the cache's `page_size`
@@ -79,34 +67,14 @@ typedef struct nccl_ofi_reg_entry nccl_ofi_reg_entry_t;
 
 ### Cache Structure
 
-```cpp
-/**
- * Device-specific memory registration cache.
- * Implemented as a sorted vector (by address) for fast lookup.
- */
-class nccl_ofi_mr_cache {          // [include/nccl_ofi_mr.h:201-256](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_mr.h)
-public:
-    nccl_ofi_mr_cache(size_t init_num_entries, size_t page_size_arg);
-    ~nccl_ofi_mr_cache();
+> Source: `include/nccl_ofi_mr.h` — `class nccl_ofi_mr_cache`. Use `codegraph explore nccl_ofi_mr_cache` for the current definition.
 
-    /* Not copyable or movable */
-    nccl_ofi_mr_cache(const nccl_ofi_mr_cache &) = delete;
-    nccl_ofi_mr_cache &operator=(const nccl_ofi_mr_cache &) = delete;
-
-    void *lookup_entry(nccl_ofi_mr_ckey_ref ckey, bool is_endpoint_mr);
-    int insert_entry(nccl_ofi_mr_ckey_ref ckey, bool is_endpoint_mr, void *handle);
-    int del_entry(void *handle);
-
-private:
-    std::vector<nccl_ofi_reg_entry_t *> slots;  // Sorted vector of entries
-    size_t page_size;                           // Page size for alignment
-    uint32_t hit_count = 0;                     // Statistics: cache hits
-    uint32_t miss_count = 0;                    // Statistics: cache misses
-
-    void compute_page_address(uintptr_t addr, size_t size,
-                              uintptr_t &page_addr, size_t &pages) const;
-};
-```
+The public surface is a two-arg constructor `nccl_ofi_mr_cache(size_t
+init_num_entries, size_t page_size_arg)`, a destructor, and three methods:
+`lookup_entry`, `insert_entry`, `del_entry`. Storage is a private
+`std::vector<nccl_ofi_reg_entry_t *> slots` plus `page_size`, `hit_count`,
+`miss_count`. The class is `= delete`d for copy construction and copy
+assignment.
 
 **Architecture**:
 - **Sorted Vector**: `slots` holds entry pointers sorted by `addr` for linear scan lookup (O(N)). Growth (`std::vector::insert`) and shrink (`std::vector::erase`) are handled by the vector; there is no manual `realloc`/`memmove`.
@@ -121,31 +89,20 @@ private:
 
 ### Cache Key
 
-```cpp
-/**
- * Cache key for lookup - supports multiple memory types
- */
-struct nccl_ofi_mr_ckey {                   // [include/nccl_ofi_mr.h:35-45](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_mr.h)
-    union {
-        struct iovec iovec;                // CPU memory (virtual address)
-#if HAVE_DECL_FI_MR_DMABUF
-        struct fi_mr_dmabuf fi_mr_dmabuf;  // GPU memory (dmabuf file descriptor)
-#endif
-    };
-    nccl_net_ofi_ep_t *ep;          // Endpoint (part of key)
-    enum nccl_ofi_mr_ckey_type type; // IOVEC or DMABUF
-};
+> Source: `include/nccl_ofi_mr.h` — `struct nccl_ofi_mr_ckey`, `nccl_ofi_mr_ckey_t`, `nccl_ofi_mr_ckey_ref`. Use `codegraph explore nccl_ofi_mr_ckey` for the current definition.
 
-typedef struct nccl_ofi_mr_ckey nccl_ofi_mr_ckey_t;              // [include/nccl_ofi_mr.h:46]
-typedef struct nccl_ofi_mr_ckey const *const nccl_ofi_mr_ckey_ref; // [include/nccl_ofi_mr.h:47]
+The key is a tagged union: an `iovec` arm (CPU memory) and, when
+`HAVE_DECL_FI_MR_DMABUF` is defined, a `fi_mr_dmabuf` arm (GPU memory), plus the
+owning `ep` and a `type` tag. The critical invariant is that the union's first
+member is at offset 0 so the key can be `reinterpret_cast` straight into the
+matching libfabric attr member — enforced at compile time:
 
-// The key must be layout-compatible with the libfabric attr member it maps to,
-// so it can be reinterpret-cast directly in nccl_ofi_mr_ckey_fill_mr_attrs():
+```c
 static_assert(offsetof(struct nccl_ofi_mr_ckey, iovec) == 0,
-              "Cache keys must be safe to cast to 'struct iovec'");        // :49
+              "Cache keys must be safe to cast to 'struct iovec'");
 #if HAVE_DECL_FI_MR_DMABUF
 static_assert(offsetof(struct nccl_ofi_mr_ckey, fi_mr_dmabuf) == 0,
-              "Cache keys must be safe to cast to 'struct fi_mr_dmabuf'"); // :51
+              "Cache keys must be safe to cast to 'struct fi_mr_dmabuf'");
 #endif
 ```
 
@@ -180,95 +137,36 @@ into a `struct fi_mr_attr`.
 
 ### Construction
 
-```cpp
-// From src/nccl_ofi_mr.cpp:13
-nccl_ofi_mr_cache::nccl_ofi_mr_cache(size_t init_num_entries,     // [src/nccl_ofi_mr.cpp:13](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_mr.cpp)
-                                     size_t page_size_arg)
-    : page_size(page_size_arg)
-{
-    if (init_num_entries == 0) {
-        NCCL_OFI_WARN("MR cache: initial number of entries must be positive");
-        throw std::runtime_error("MR cache: initial number of entries must be positive");
-    }
-    if (page_size_arg == 0) {
-        NCCL_OFI_WARN("MR cache: page size must be positive");
-        throw std::runtime_error("MR cache: page size must be positive");
-    }
-    // Reserve, don't map: init_num_entries just sizes the backing vector.
-    this->slots.reserve(init_num_entries);
-}
-```
+> Source: `src/nccl_ofi_mr.cpp` — `nccl_ofi_mr_cache::nccl_ofi_mr_cache()`. Use `codegraph explore nccl_ofi_mr_cache` for the current body.
 
 The constructor takes exactly two arguments — `init_num_entries` and
-`page_size_arg` — and does not allocate any MR entries; it only reserves vector
-capacity. `hit_count` and `miss_count` are default-initialized to 0 in the class
-body. There is no return code: invalid arguments raise `std::runtime_error`,
-which the caller must be prepared to catch (see the `emplace` call site below).
+`page_size_arg` — and does not allocate any MR entries; it only `reserve`s
+vector capacity. `hit_count` and `miss_count` are default-initialized to 0 in the
+class body. **There is no return code: invalid arguments (zero initial entries
+or zero page size) raise `std::runtime_error`**, which the caller must be
+prepared to catch (see the `emplace` call site below).
 
 ### Destruction
 
-```cpp
-// From src/nccl_ofi_mr.cpp:34
-nccl_ofi_mr_cache::~nccl_ofi_mr_cache()                            // [src/nccl_ofi_mr.cpp:34](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_mr.cpp)
-{
-    NCCL_OFI_INFO(NCCL_NET, "MR cache %d hits %d misses",
-                  this->hit_count, this->miss_count);
+> Source: `src/nccl_ofi_mr.cpp` — `nccl_ofi_mr_cache::~nccl_ofi_mr_cache()`. Use `codegraph explore nccl_ofi_mr_cache` for the current body.
 
-    /* Free any remaining entries that were not deleted via del_entry() */
-    if (!this->slots.empty()) {
-        NCCL_OFI_WARN("MR cache destroyed while %zu memory segments still held "
-                      "by the application. Forcing release of remaining entries.",
-                      this->slots.size());
-        for (auto *entry : this->slots) {
-            delete entry;
-        }
-    }
-}
-```
-
-The destructor always emits the hit/miss statistics line (this replaces the old
-explicit "print stats on finalize" step) and force-frees any leaked entries.
+The destructor always emits the hit/miss statistics line
+(`"MR cache %d hits %d misses"`, replacing the old explicit "print stats on
+finalize" step) and, if any entries remain, warns
+(`"MR cache destroyed while %zu memory segments still held..."`) and `delete`s
+them. Normal teardown expects the cache to be empty because every `regmr` is
+matched by a `dereg` that drives refcnt to zero.
 
 ### Lookup (Fast Path)
 
-```cpp
-// From src/nccl_ofi_mr.cpp:61
-void *nccl_ofi_mr_cache::lookup_entry(nccl_ofi_mr_ckey_ref ckey,   // [src/nccl_ofi_mr.cpp:61](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_mr.cpp)
-                                      bool is_endpoint_mr)
-{
-    uintptr_t page_addr;
-    size_t pages;
+> Source: `src/nccl_ofi_mr.cpp` — `nccl_ofi_mr_cache::lookup_entry()`. Use `codegraph explore lookup_entry` for the current body.
 
-    // Convert base address/length (from the ckey) to page-aligned addr + count
-    this->compute_page_address(nccl_ofi_mr_ckey_baseaddr(ckey),
-                               nccl_ofi_mr_ckey_len(ckey),
-                               page_addr, pages);
+`lookup_entry` converts the ckey's base address/length to a page-aligned
+`page_addr` + `pages` (via `compute_page_address`), then linearly scans the
+sorted `slots` vector for a covering entry.
 
-    // Linear scan through the sorted vector
-    for (size_t slot = 0;; slot++) {
-        assert(slot <= this->slots.size());
-
-        if (slot == this->slots.size() ||
-            page_addr < this->slots[slot]->addr) {
-            // Passed where entry would be (or ran off the end): cache miss
-            this->miss_count++;
-            return nullptr;
-        } else if (is_endpoint_mr && (ckey->ep != this->slots[slot]->ep)) {
-            continue;  // Different endpoint - keep scanning
-        } else if ((page_addr >= this->slots[slot]->addr) &&
-                   ((page_addr - this->slots[slot]->addr) / this->page_size + pages)
-                       <= this->slots[slot]->pages) {
-            // Cache hit - the requested range is covered by this entry
-            this->hit_count++;
-            this->slots[slot]->refcnt++;  // Take a reference
-            return this->slots[slot]->handle;
-        }
-    }
-}
-```
-
-**Return value**: the `void *` MR handle on hit (with `refcnt` incremented), or
-`nullptr` on miss. Note `is_endpoint_mr` controls whether the endpoint must also
+**Return value**: the `void *` MR handle on hit (**with `refcnt` incremented**),
+or `nullptr` on miss. `is_endpoint_mr` controls whether the endpoint must also
 match: when `true`, an entry for a different endpoint is skipped rather than
 treated as a hit.
 
@@ -282,47 +180,11 @@ treated as a hit.
 
 ### Insert (Slow Path)
 
-```cpp
-// From src/nccl_ofi_mr.cpp:100
-int nccl_ofi_mr_cache::insert_entry(nccl_ofi_mr_ckey_ref ckey,     // [src/nccl_ofi_mr.cpp:100](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_mr.cpp)
-                                    bool is_endpoint_mr,
-                                    void *handle)
-{
-    uintptr_t page_addr;
-    size_t pages;
-    this->compute_page_address(nccl_ofi_mr_ckey_baseaddr(ckey),
-                               nccl_ofi_mr_ckey_len(ckey),
-                               page_addr, pages);
+> Source: `src/nccl_ofi_mr.cpp` — `nccl_ofi_mr_cache::insert_entry()`. Use `codegraph explore insert_entry` for the current body.
 
-    for (size_t slot = 0;; slot++) {
-        assert(slot <= this->slots.size());
-
-        if (slot == this->slots.size() ||
-            page_addr < this->slots[slot]->addr) {
-            // Found insertion point (maintaining sorted order)
-
-            auto *entry = new (std::nothrow) nccl_ofi_reg_entry(
-                page_addr, pages, handle, ckey->ep);   // refcnt starts at 1
-            if (!entry) {
-                NCCL_OFI_WARN("Failed to allocate new slot");
-                return -ENOMEM;
-            }
-
-            // Vector handles both the grow and the shift
-            this->slots.insert(this->slots.begin() + slot, entry);
-            return 0;
-
-        } else if ((!(is_endpoint_mr && (this->slots[slot]->ep != ckey->ep))) &&
-                   (page_addr >= this->slots[slot]->addr) &&
-                   ((page_addr - this->slots[slot]->addr) / this->page_size + pages)
-                       <= this->slots[slot]->pages) {
-            // Range already covered by an existing entry
-            NCCL_OFI_WARN("Entry already exists for input ...");
-            return -EEXIST;
-        }
-    }
-}
-```
+`insert_entry` computes the page-aligned range, scans for the sorted insertion
+point, `new`-allocates a `nccl_ofi_reg_entry` (refcnt starts at 1) and calls
+`std::vector::insert` to place it in order.
 
 **Return value**: `0` on success, `-ENOMEM` if the entry allocation fails, or
 `-EEXIST` if the range is already covered. The new entry's `refcnt` is `1` (set
@@ -334,36 +196,10 @@ no manual `realloc`/`memmove` and no capacity-doubling bookkeeping in this code.
 
 ### Delete (Reference Counting)
 
-```cpp
-// From src/nccl_ofi_mr.cpp:150
-int nccl_ofi_mr_cache::del_entry(void *handle)                    // [src/nccl_ofi_mr.cpp:150](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_mr.cpp)
-{
-    /* Find slot by handle */
-    int slot = -1;
-    for (size_t i = 0; i < this->slots.size(); i++) {
-        if (handle == this->slots[i]->handle) {
-            slot = (int)i;
-            break;
-        }
-    }
+> Source: `src/nccl_ofi_mr.cpp` — `nccl_ofi_mr_cache::del_entry()`. Use `codegraph explore del_entry` for the current body.
 
-    if (slot < 0) {
-        NCCL_OFI_WARN("Did not find entry to delete");
-        return -ENOENT;
-    }
-
-    /* Keep entry alive for other users */
-    if (--this->slots[slot]->refcnt) {
-        return 0;  // Still referenced; caller must NOT deregister
-    }
-
-    /* Last reference gone: free entry and remove from vector */
-    delete this->slots[slot];
-    this->slots.erase(this->slots.begin() + slot);
-
-    return 1;  // Entry deleted; caller SHOULD deregister the handle
-}
-```
+`del_entry` finds the slot by `handle`, decrements `refcnt`, and only removes and
+frees the entry (via `std::vector::erase`) when the last reference is dropped.
 
 **Return value**: `-ENOENT` if the handle isn't found, `0` if the entry is still
 referenced (refcnt decremented but > 0, so the caller must **not** deregister),
@@ -394,75 +230,35 @@ itself has no internal mutex.
 
 ### Usage Flow (RDMA register path)
 
-Based on `nccl_net_ofi_rdma_domain_t::reg_mr`
-([src/nccl_ofi_rdma.cpp:3174-3205](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_rdma.cpp)):
+> Source: `src/nccl_ofi_rdma.cpp` — `nccl_net_ofi_rdma_domain_t::reg_mr`. Use `codegraph explore reg_mr` for the current body.
+
+The register path takes the domain's `mr_cache_lock` **across both the lookup
+and the insert** so a missing entry is registered on-device and inserted
+atomically. The idiom:
 
 ```cpp
-nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
-*mhandle = NULL;
-
-if (this->mr_cache) {
-    /* Lock held across lookup+insert so a missing entry is inserted atomically */
-    std::lock_guard cache_guard(this->mr_cache_lock);
-
-    ret_handle = static_cast<nccl_net_ofi_rdma_mr_handle_t *>(
-        this->mr_cache->lookup_entry(ckey, endpoint_mr));
-    if (ret_handle) {
-        /* Cache hit */
-        *mhandle = ret_handle;
-        return 0;
-    }
-    /* Cache miss - register on device, then insert */
-    ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle);
-    if (OFI_UNLIKELY(ret != 0)) {
-        return ret;
-    }
-
-    ret = this->mr_cache->insert_entry(ckey, endpoint_mr, ret_handle);
-    if (OFI_UNLIKELY(ret != 0)) {
-        /* insert failed: undo the device registration */
-        if (this->dereg_mr_no_lock(ret_handle) != 0) {
-            NCCL_OFI_WARN("Error de-registering MR");
-        }
-        return ret;
-    }
-} else {
-    /* Cache disabled: always register on device */
-    ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle);
-    ...
+std::lock_guard cache_guard(this->mr_cache_lock);
+handle = this->mr_cache->lookup_entry(ckey, endpoint_mr);   // hit → return handle
+if (!handle) {
+    reg_mr_on_device(ckey, type, ep, &handle);              // miss → register
+    if (this->mr_cache->insert_entry(ckey, endpoint_mr, handle) != 0)
+        dereg_mr_no_lock(handle);                           // insert failed → undo
 }
 ```
 
-The sendrecv transport follows the same shape in `sendrecv_comm_mr_base_reg`
-([src/nccl_ofi_sendrecv.cpp:774-808](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_sendrecv.cpp)),
-using `domain->mr_cache.has_value()` and `domain->mr_cache_lock`.
+When the cache is disabled (`!this->mr_cache`) the path always registers on
+device. The sendrecv transport follows the same shape in
+`sendrecv_comm_mr_base_reg` (`src/nccl_ofi_sendrecv.cpp`), using
+`domain->mr_cache.has_value()` and `domain->mr_cache_lock`.
 
 ### Deregistration Flow
 
-Based on `nccl_net_ofi_rdma_domain_t::dereg_mr`
-([src/nccl_ofi_rdma.cpp:2975-2995](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_rdma.cpp))
-and the sendrecv equivalent `sendrecv_comm_mr_base_dereg`
-([src/nccl_ofi_sendrecv.cpp:717-726](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_sendrecv.cpp)):
+> Source: `src/nccl_ofi_rdma.cpp` — `nccl_net_ofi_rdma_domain_t::dereg_mr`; `src/nccl_ofi_sendrecv.cpp` — `sendrecv_comm_mr_base_dereg`. Use `codegraph explore dereg_mr` for the current bodies.
 
-```cpp
-if (this->mr_cache) {
-    std::lock_guard cache_guard(this->mr_cache_lock);
-
-    int ret = this->mr_cache->del_entry(mr_handle);
-    if (OFI_UNLIKELY(ret < 0)) {
-        NCCL_OFI_WARN("Failed to delete MR cache entry");
-    } else if (ret == 0) {
-        /* Still referenced by others - do NOT deregister */
-        return ret;
-    }
-    /* ret == 1: last reference gone - fall through to deregister */
-}
-
-dereg_mr_on_device(mr_handle);
-```
-
-This is exactly the contract of `del_entry`'s return value: only the `1` case
-(last reference dropped) proceeds to the device deregistration.
+Deregistration is driven entirely by `del_entry`'s return contract: under the
+`mr_cache_lock`, call `del_entry(mr_handle)`; on `0` (still referenced) return
+without touching the device; only on `1` (last reference dropped) fall through to
+`dereg_mr_on_device`. A negative return is logged as an error.
 
 ### Page Alignment Logic
 

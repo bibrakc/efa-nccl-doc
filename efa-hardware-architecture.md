@@ -1,5 +1,7 @@
 # EFA Hardware Architecture: Queue Pairs, Completion Queues, and Memory Layout
 
+> **Source lookups:** this document records mechanism, defaults, corrections and history. For current function bodies, call graphs and blast radius, query the code graph (`codegraph explore <symbol>`) rather than trusting a pasted copy here. The struct excerpts below are kept deliberately because the **byte/bitfield layout is the fact** (VALUE), not to mirror the source text.
+
 ## Overview
 
 AWS Elastic Fabric Adapter (EFA) is a custom network interface designed for HPC and ML workloads, implementing RDMA-like semantics with kernel bypass. This document describes the low-level hardware queue architecture, memory layout, and programming interface.
@@ -17,6 +19,13 @@ libfabric **2.7.0rc1** `main`; rdma-core **65.0-dev** `master`, latest release v
 - Key headers: [efa_io_defs.h](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h), [efa_verbs.h](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h)
 - Libfabric provider: [libfabric/prov/efa/](https://github.com/ofiwg/libfabric/tree/main/prov/efa)
 - Libfabric Data Path Direct: [efa_data_path_direct*.{c,h}](https://github.com/ofiwg/libfabric/tree/main/prov/efa/src) (see [rdma-core-and-verbs.md](rdma-core-and-verbs.md))
+
+> **`efa_io_defs.h` is duplicated across three repos.** The same device I/O
+> definitions (`struct efa_io_*`, the enums and bit layouts below) are copied
+> into **rdma-core**, the **EFA kernel driver** (amzn-drivers), and **libfabric**.
+> They are meant to stay byte-identical; when reading one, expect the same layout
+> in the others. This is a fact about *where the definitions live*, not code the
+> graph can dedupe for you.
 
 ## Queue Pair Architecture
 
@@ -307,17 +316,10 @@ struct efa_io_cdesc_common {
 };
 ```
 
-**`struct efa_io_tx_cdesc`** ([efa_io_defs.h:311-317](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
-
-```c
-struct efa_io_tx_cdesc {
-	/* Common completion info */
-	struct efa_io_cdesc_common common;
-
-	/* MBZ */
-	u16 reserved16;
-};
-```
+**`struct efa_io_tx_cdesc`** — just the common completion header
+(`efa_io_cdesc_common`) plus a reserved 16-bit word; a TX completion carries no
+extra payload beyond `req_id`/`status`/`flags`/`qp_num`.
+> Source: `amzn-drivers/kernel/linux/efa/src/efa_io_defs.h` — `struct efa_io_tx_cdesc`. Use `codegraph explore efa_io_tx_cdesc` for the current definition.
 
 **`struct efa_io_rx_cdesc`** ([efa_io_defs.h:320-334](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
 
@@ -480,17 +482,10 @@ static inline void efa_inc_fast_reg_key_gen(struct ib_mr *mr)
 
 ### RDMA Operations
 
-**`struct efa_io_rdma_req`** ([efa_io_defs.h:167-173](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
-
-```c
-struct efa_io_rdma_req {
-	/* Remote memory address */
-	struct efa_io_remote_mem_addr remote_mem;
-
-	/* Local memory address */
-	struct efa_io_tx_buf_desc local_mem[1];
-};
-```
+**`struct efa_io_rdma_req`** — an RDMA request is just a remote address
+(`efa_io_remote_mem_addr`, below) plus one local buffer descriptor
+(`efa_io_tx_buf_desc local_mem[1]`).
+> Source: `amzn-drivers/kernel/linux/efa/src/efa_io_defs.h` — `struct efa_io_rdma_req`. Use `codegraph explore efa_io_rdma_req` for the current definition.
 
 **`struct efa_io_remote_mem_addr`** ([efa_io_defs.h:153-165](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h)):
 
@@ -521,26 +516,14 @@ struct efa_io_remote_mem_addr {
 
 ### SRD Work Request Structure
 
-**`struct ib_srd_wr`** ([efa_verbs.h:13-18](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h)):
+SRD work requests extend the verbs WR with **per-WR destination addressing** (the
+distinctive SRD trait):
 
-```c
-struct ib_srd_wr {
-	struct ib_send_wr wr;
-	struct ib_ah *ah;       // Address handle for destination
-	u32 remote_qpn;         // Remote QP number
-	u32 remote_qkey;        // Remote queue key
-};
-```
+- **`struct ib_srd_wr`** = `ib_send_wr wr` + `ib_ah *ah` + `u32 remote_qpn` +
+  `u32 remote_qkey`.
+- **`struct ib_srd_rdma_wr`** = `ib_srd_wr wr` + `u64 remote_addr` + `u32 rkey`.
 
-**`struct ib_srd_rdma_wr`** ([efa_verbs.h:20-24](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.h)):
-
-```c
-struct ib_srd_rdma_wr {
-	struct ib_srd_wr wr;
-	u64 remote_addr;        // Remote memory address
-	u32 rkey;               // Remote key
-};
-```
+> Source: `amzn-drivers/kernel/linux/efa/src/efa_verbs.h` — `struct ib_srd_wr`, `struct ib_srd_rdma_wr`. Use `codegraph explore ib_srd_wr` for the current definitions.
 
 **Key Differences from RC**:
 - Address Handle specified per WQE (not per QP)
@@ -628,63 +611,31 @@ For 1000 QPs: ~72 MB of queue memory
 
 ### Posting Send Request
 
+> Source: libfabric `prov/efa/src/efa_data_path_direct_*.c` (or rdma-core `ibv_wr_*` on the fallback path). Use `codegraph explore` for the current bodies.
+
+The fill sequence is: take the WQE at the SQ producer index, set `meta` fields
+(`req_id`, `ctrl1` op_type, `ctrl2` first/last/comp_req bits — see the
+`efa_io_tx_meta_desc` layout above, `dest_qp_num`, `ah`, `qkey`), fill
+`data.sgl[i]` with length/lkey/split 64-bit address, advance the producer index
+mod depth, then **ring the doorbell with an MMIO write**:
+
 ```c
-// 1. Allocate WQE from send queue
-struct efa_io_tx_wqe *wqe = &sq->wqes[sq->producer_idx];
-
-// 2. Fill metadata
-wqe->meta.req_id = generate_request_id();
-wqe->meta.ctrl1 = (EFA_IO_SEND << 0);  // op_type
-wqe->meta.ctrl2 = (1 << 2) | (1 << 3) | (1 << 4);  // first, last, comp_req
-wqe->meta.dest_qp_num = remote_qp;
-wqe->meta.length = num_sge;
-wqe->meta.ah = address_handle_index;
-wqe->meta.qkey = QP_QKEY;
-
-// 3. Fill buffer descriptors
-wqe->data.sgl[0].length = buffer_length;
-wqe->data.sgl[0].lkey = mr->lkey;
-wqe->data.sgl[0].buf_addr_lo = (u32)(buffer_addr & 0xFFFFFFFF);
-wqe->data.sgl[0].buf_addr_hi = (u32)(buffer_addr >> 32);
-
-// 4. Advance producer index
-sq->producer_idx = (sq->producer_idx + 1) % sq->depth;
-
-// 5. Ring doorbell (MMIO write)
-writel(sq->producer_idx, sq->doorbell_addr);
+writel(sq->producer_idx, sq->doorbell_addr);  // MMIO to device BAR; no syscall
 ```
 
 ### Polling Completion Queue
 
+> Source: libfabric `prov/efa/src/efa_data_path_direct_*.c` (or rdma-core `ibv_start_poll`/`ibv_next_poll` on the fallback path). Use `codegraph explore` for the current bodies.
+
+CQ polling is driven by the **phase bit**: read the CQE at the consumer index and
+compare its phase bit (`flags & 0x1`) to the expected phase. If they differ there
+is no new completion. On a match, consume `req_id`/`status`/`length`, advance the
+consumer index mod depth, and **toggle the expected phase on wrap**:
+
 ```c
-// 1. Read CQ entry
-struct efa_io_rx_cdesc *cqe = &cq->entries[cq->consumer_idx];
-
-// 2. Check ownership via phase bit
-u8 expected_phase = cq->phase;
-u8 entry_phase = cqe->common.flags & 0x1;
-
-if (entry_phase != expected_phase) {
-	// No new completions
-	return 0;
-}
-
-// 3. Process completion
-u16 req_id = cqe->common.req_id;
-u8 status = cqe->common.status;
-u16 length = cqe->length;  // bytes received
-
-if (status != EFA_IO_COMP_STATUS_OK) {
-	// Handle error
-}
-
-// 4. Advance consumer index
-cq->consumer_idx = (cq->consumer_idx + 1) % cq->depth;
-if (cq->consumer_idx == 0) {
-	cq->phase ^= 1;  // Toggle phase on wrap
-}
-
-// 5. Return completion to application
+if ((cqe->common.flags & 0x1) != cq->phase) return 0;   // no new completion
+/* ... process req_id / status / length ... */
+if (++cq->consumer_idx == cq->depth) { cq->consumer_idx = 0; cq->phase ^= 1; }
 ```
 
 ### Zero-Copy Data Path

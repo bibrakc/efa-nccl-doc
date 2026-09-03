@@ -1,8 +1,20 @@
 # OFI NCCL Plugin: Connection Establishment and Send/Recv Protocols
 
+> **Source lookups:** this document records mechanism, defaults, corrections and history. For current function bodies, call graphs and blast radius, query the code graph (`codegraph explore <symbol>`) rather than trusting a pasted copy here.
+
 ## Overview
 
 This document provides detailed descriptions of the connection establishment mechanism and send/recv protocols used in the OFI NCCL plugin, including the actual message flows and state management.
+
+### Exported plugin symbol sets
+
+The plugin exports these versioned op-table symbols (the version *set* is the
+fact; see [ofi-plugin.md](ofi-plugin.md) for the per-table contents):
+
+- **Net**: `ncclNetPlugin_v4` .. `ncclNetPlugin_v12` (`v4` on the Neuron interface, up to `v12` on the NVIDIA interface).
+- **GIN**: `ncclGinPlugin_v11`, `ncclGinPlugin_v13`, `ncclGinPlugin_v14` (**`v14` is GDAKI-only**, present iff `HAVE_GDAKI`).
+- **RMA**: `ncclRmaPlugin_v14`, `ncclRmaPlugin_v15`.
+- **Tuner**: `ncclTunerPlugin_v2`, `ncclTunerPlugin_v3`, `ncclTunerPlugin_v6`.
 
 ## Connection Establishment Protocol
 
@@ -37,51 +49,13 @@ NCCL Initiates Connection:
 
 **Purpose**: Receiver creates an endpoint and exports its address for the sender to connect.
 
-```c
-ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
-                                 void** listenComm)
-{
-  auto *comm = new nccl_net_ofi_listen_comm();  // C++ class, not C struct  // See struct nccl_net_ofi_listen_comm (https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi.h)
+> Source: `src/nccl_ofi_net.cpp` (transport-specific in `nccl_ofi_sendrecv.cpp` / `nccl_ofi_rdma.cpp`) — `nccl_net_ofi_listen()`. Use `codegraph explore nccl_net_ofi_listen` for the current body.
 
-  // 1. Create libfabric endpoint
-  struct fi_info* info = get_efa_info(dev);
-  ret = fi_endpoint(domain, info, &comm->ep, NULL);
-
-  // 2. Create completion queue (if not shared)
-  struct fi_cq_attr cq_attr = {
-    .size = 1024,
-    .format = FI_CQ_FORMAT_DATA,
-  };
-  ret = fi_cq_open(domain, &cq_attr, &comm->cq, NULL);  // See fi_cq_open() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
-
-  // 3. Bind endpoint to resources
-  fi_ep_bind(comm->ep, &comm->cq->fid, FI_TRANSMIT | FI_RECV);
-  fi_ep_bind(comm->ep, &av->fid, 0);  // Address vector
-
-  // 4. Enable endpoint
-  fi_enable(comm->ep);
-
-  // 5. Get local endpoint address
-  size_t addrlen = MAX_EP_ADDR_LEN;
-  ret = fi_getname(&comm->ep->fid, &local_addr, &addrlen);
-
-  // 6. Serialize address into handle (for NCCL to send to peer)
-  // struct nccl_ofi_handle - conceptual structure for handle serialization
-  struct nccl_ofi_handle {
-    char ep_addr[MAX_EP_ADDR_LEN];
-    size_t ep_addr_len;
-  };
-
-  struct nccl_ofi_handle* h = (struct nccl_ofi_handle*)handle;
-  memcpy(h->ep_addr, &local_addr, addrlen);
-  h->ep_addr_len = addrlen;
-
-  // 7. Store state
-  *listenComm = comm;
-
-  return ncclSuccess;
-}
-```
+The setup idiom is: create the endpoint (`fi_endpoint`), open a CQ
+(`fi_cq_open`), bind CQ + address vector to the endpoint
+(`fi_ep_bind(..., FI_TRANSMIT | FI_RECV)` and the AV), `fi_enable` it, read the
+local address with `fi_getname`, and serialize that address into the opaque
+`handle` NCCL will ship to the peer out-of-band.
 
 **What gets stored in `handle`:**
 - Endpoint address (libfabric address, e.g., `<ip>:<port>` equivalent for EFA)
@@ -95,49 +69,15 @@ ncclResult_t nccl_net_ofi_listen(int dev, void* handle,
 
 **Purpose**: Sender receives the receiver's handle, creates its own endpoint, and establishes "connection" (state tracking for connectionless RDM).
 
+> Source: `src/nccl_ofi_net.cpp` (transport-specific in `nccl_ofi_sendrecv.cpp` / `nccl_ofi_rdma.cpp`) — `nccl_net_ofi_connect()`. Use `codegraph explore nccl_net_ofi_connect` for the current body.
+
+The idiom mirrors `listen()` (create endpoint, open/share CQ, bind, enable) and
+adds the one connectionless-RDM-specific step: **insert the peer's address into
+the address vector** to obtain an `fi_addr_t` used as the destination on every
+send:
+
 ```c
-ncclResult_t nccl_net_ofi_connect(int dev, void* handle,
-                                  void** sendComm)
-{
-  auto *comm = new nccl_net_ofi_send_comm();  // C++ class, not C struct  // See struct nccl_net_ofi_send_comm (https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi.h)
-
-  // 1. Deserialize peer's address from handle
-  struct nccl_ofi_handle* h = (struct nccl_ofi_handle*)handle;
-  void* peer_addr = h->ep_addr;
-  size_t peer_addr_len = h->ep_addr_len;
-
-  // 2. Create local endpoint
-  struct fi_info* info = get_efa_info(dev);
-  ret = fi_endpoint(domain, info, &comm->ep, NULL);
-
-  // 3. Create/share completion queue
-  ret = fi_cq_open(domain, &cq_attr, &comm->cq, NULL);
-
-  // 4. Bind endpoint
-  fi_ep_bind(comm->ep, &comm->cq->fid, FI_TRANSMIT | FI_RECV);
-  fi_ep_bind(comm->ep, &av->fid, 0);
-
-  // 5. Enable endpoint
-  fi_enable(comm->ep);
-
-  // 6. Insert peer address into Address Vector (AV)
-  //    This maps peer's address to fi_addr_t for use in sends
-  fi_addr_t remote_fi_addr;
-  ret = fi_av_insert(av, peer_addr, 1, &remote_fi_addr, 0, NULL);
-
-  // 7. Store remote address for future sends
-  comm->remote_addr = remote_fi_addr;
-
-  // 8. Initialize request tracking
-  comm->pending_sends = 0;
-  comm->send_head = 0;
-  comm->send_tail = 0;
-
-  // 9. Return send comm
-  *sendComm = comm;
-
-  return ncclSuccess;
-}
+fi_av_insert(av, peer_addr, 1, &remote_fi_addr, 0, NULL);  // peer addr -> fi_addr_t
 ```
 
 **Key Point**: For EFA (RDM endpoint), there's **no actual connection handshake** at the libfabric/network level. The "connection" is purely state tracking in the plugin.
@@ -146,35 +86,11 @@ ncclResult_t nccl_net_ofi_connect(int dev, void* handle,
 
 **Purpose**: Complete the connection setup on the receiver side.
 
-```c
-ncclResult_t nccl_net_ofi_accept(void* listenComm,
-                                 void** recvComm)
-{
-  nccl_net_ofi_listen_comm *lcomm = (nccl_net_ofi_listen_comm *)listenComm;
+> Source: `src/nccl_ofi_net.cpp` (transport-specific in `nccl_ofi_sendrecv.cpp` / `nccl_ofi_rdma.cpp`) — `nccl_net_ofi_accept()`. Use `codegraph explore nccl_net_ofi_accept` for the current body.
 
-  // For connectionless RDM (EFA):
-  // No actual connection to "accept" in libfabric
-  // Just transition state
-
-  auto *comm = new nccl_net_ofi_recv_comm();  // C++ class, not C struct  // See struct nccl_net_ofi_recv_comm (https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi.h)
-
-  // Copy endpoint and resources from listen comm
-  comm->ep = lcomm->ep;
-  comm->cq = lcomm->cq;
-
-  // Initialize receive tracking
-  comm->pending_recvs = 0;
-  comm->recv_head = 0;
-  comm->recv_tail = 0;
-
-  // Allocate unexpected message buffer
-  comm->unexp_msg_buf = malloc(UNEXP_BUF_SIZE);
-
-  *recvComm = comm;
-
-  return ncclSuccess;
-}
-```
+For connectionless RDM there is no libfabric-level connection to accept: the call
+just creates the receive-side comm (carrying the endpoint/CQ from the listen
+comm) and its receive-tracking state.
 
 **Important**: For EFA/RDM, accept is essentially a no-op at the libfabric level. It just creates the receive-side state structure.
 
@@ -274,71 +190,19 @@ ncclResult_t ncclNet->isend(void* sendComm, void* data,
 
 **Detailed Flow:**
 
+> Source: `src/nccl_ofi_sendrecv.cpp` / `src/nccl_ofi_rdma.cpp` — `nccl_net_ofi_isend()`. Use `codegraph explore nccl_net_ofi_isend` for the current body.
+
+isend allocates a request, gets the MR descriptor (`fi_mr_desc(mr)` — carries the
+lkey), and posts a tagged send. The `fi_tsend` argument order is the idiom worth
+remembering — the request is passed as the context returned on completion:
+
 ```c
-ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data,
-                                int size, int tag,
-                                void* mhandle, void** request)
-{
-  nccl_net_ofi_send_comm *comm = (nccl_net_ofi_send_comm *)sendComm;  // See struct nccl_net_ofi_send_comm (https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi.h)
-  struct fid_mr* mr = mhandle;  // See struct fid_mr (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_domain.h)
-
-  // === 1. Allocate Request ===
-  nccl_net_ofi_req *req = alloc_request(comm);  // See struct nccl_net_ofi_req (https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi.h)
-  req->comm = comm;
-  req->size = size;
-  req->state = REQ_PENDING;
-  req->type = NCCL_OFI_SEND;
-
-  // === 2. Get Memory Descriptor ===
-  // Descriptor contains lkey for local access
-  void* desc = fi_mr_desc(mr);  // See fi_mr_desc() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_domain.h)
-
-  // === 3. Prepare Tagged Send ===
-  // Tag identifies which NCCL operation/channel this is
-  uint64_t fi_tag = (uint64_t)tag;
-
-  // === 4. Post Send to Libfabric ===
-  ssize_t ret = fi_tsend(  // See fi_tsend() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_tagged.h)
-      comm->ep,               // Endpoint
-      data,                   // Buffer to send
-      size,                   // Size
-      desc,                   // Memory descriptor (with lkey)
-      comm->remote_addr,      // Peer's fi_addr_t (from AV)
-      fi_tag,                 // Tag for matching
-      req                     // Context (returned on completion)
-  );
-
-  // === 5. Handle Return ===
-  if (ret == 0) {
-    // Successfully posted
-    comm->pending_sends++;
-    req->state = REQ_POSTED;
-  }
-  else if (ret == -FI_EAGAIN) {
-    // Queue full, need to retry
-    // Either retry immediately or queue for later
-    req->state = REQ_QUEUED;
-    queue_request(comm, req);
-
-    // Progress CQ to make space
-    progress_sends(comm);
-
-    // Retry
-    ret = fi_tsend(comm->ep, data, size, desc,
-                   comm->remote_addr, fi_tag, req);
-  }
-  else {
-    // Error
-    free_request(req);
-    return ncclSystemError;
-  }
-
-  // === 6. Return Request Handle ===
-  *request = req;
-
-  return ncclSuccess;
-}
+fi_tsend(comm->ep, data, size, desc, comm->remote_addr, fi_tag, /*context=*/req);
 ```
+
+Return handling is the standard libfabric back-pressure idiom: `0` = posted;
+**`-FI_EAGAIN`** = transmit queue full, so progress the CQ and retry (do not treat
+as an error); anything else is a real error.
 
 **What Happens After `fi_tsend()`:**
 
@@ -395,61 +259,21 @@ ncclResult_t ncclNet->irecv(void* recvComm, int n,
 
 **Detailed Flow:**
 
+> Source: `src/nccl_ofi_sendrecv.cpp` / `src/nccl_ofi_rdma.cpp` — `nccl_net_ofi_irecv()`. Use `codegraph explore nccl_net_ofi_irecv` for the current body.
+
+irecv allocates one request covering all `n` sub-receives and posts each with
+`fi_trecv`. The request's direction is set to **`NCCL_OFI_SENDRECV_RECV`**
+(`include/nccl_ofi_sendrecv.h`) — note the identifier is `NCCL_OFI_SENDRECV_RECV`,
+**there is no `NCCL_OFI_RECV`**. Each `fi_trecv` accepts from any sender and matches
+on tag with an exact-match ignore mask:
+
 ```c
-ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n,
-                                void** data, int* sizes,
-                                int* tags, void** mhandles,
-                                void** request)
-{
-  nccl_net_ofi_recv_comm *comm = (nccl_net_ofi_recv_comm *)recvComm;  // See struct nccl_net_ofi_recv_comm (https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi.h)
-
-  // === 1. Allocate Request for All Receives ===
-  nccl_net_ofi_req *req = alloc_request(comm);
-  req->comm = comm;
-  req->direction = NCCL_OFI_SENDRECV_RECV;   // include/nccl_ofi_sendrecv.h:31
-  req->nrecvs = n;
-  req->completed = 0;
-
-  // === 2. Post Each Receive ===
-  for (int i = 0; i < n; i++) {
-    struct fid_mr* mr = mhandles[i];
-    void* desc = fi_mr_desc(mr);
-    uint64_t fi_tag = (uint64_t)tags[i];
-
-    // === 3. Pre-Post Tagged Receive ===
-    ssize_t ret = fi_trecv(  // See fi_trecv() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_tagged.h)
-        comm->ep,               // Endpoint
-        data[i],                // Receive buffer
-        sizes[i],               // Size
-        desc,                   // Memory descriptor
-        FI_ADDR_UNSPEC,         // Accept from any sender
-        fi_tag,                 // Tag to match
-        0,                      // Ignore mask (exact match)
-        &req->sub_reqs[i]       // Sub-request context
-    );
-
-    if (ret == 0) {
-      // Successfully posted
-      req->sub_reqs[i].state = REQ_POSTED;
-      comm->pending_recvs++;
-    }
-    else if (ret == -FI_EAGAIN) {
-      // Queue full, retry
-      progress_recvs(comm);
-      i--;  // Retry this receive
-    }
-    else {
-      // Error
-      return ncclSystemError;
-    }
-  }
-
-  // === 4. Return Request ===
-  *request = req;
-
-  return ncclSuccess;
-}
+fi_trecv(comm->ep, data[i], sizes[i], desc, FI_ADDR_UNSPEC,
+         fi_tag, /*ignore=*/0, &req->sub_reqs[i]);
 ```
+
+`-FI_EAGAIN` on a sub-receive means progress the CQ and retry that same index;
+other non-zero returns are errors.
 
 **Pre-Posting Semantics:**
 
@@ -533,93 +357,23 @@ ncclResult_t ncclNet->test(void* request, int* done, int* size);
 
 **Detailed Flow:**
 
-```c
-ncclResult_t nccl_net_ofi_test(void* request, int* done, int* size)
-{
-  struct nccl_ofi_req* req = request;
-  struct nccl_ofi_comm* comm = req->comm;
+> Source: `src/nccl_ofi_sendrecv.cpp` / `src/nccl_ofi_rdma.cpp` — `nccl_net_ofi_test()`. Use `codegraph explore nccl_net_ofi_test` for the current body.
 
-  *done = 0;
-
-  // === 1. Poll Completion Queue ===
-  struct fi_cq_data_entry entries[CQ_POLL_BATCH];  // See struct fi_cq_data_entry (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
-  int nread = fi_cq_read(comm->cq, entries, CQ_POLL_BATCH);  // See fi_cq_read() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
-
-  if (nread > 0) {
-    // === 2. Process Completions ===
-    for (int i = 0; i < nread; i++) {
-      struct fi_cq_data_entry* entry = &entries[i];
-
-      // Get request from context
-      struct nccl_ofi_req* comp_req =
-          (struct nccl_ofi_req*)entry->op_context;
-
-      // === 3. Check if This is Our Request ===
-      if (comp_req == req) {
-        // Our request completed!
-        *done = 1;
-        *size = entry->len;
-
-        // Update state
-        req->state = REQ_COMPLETED;
-        if (req->type == NCCL_OFI_SEND) {
-          comm->pending_sends--;
-        } else {
-          comm->pending_recvs--;
-        }
-
-        // Free request
-        free_request(req);
-
-        return ncclSuccess;
-      }
-      else {
-        // Someone else's completion, process it
-        process_completion(comm, comp_req, entry);
-      }
-    }
-  }
-  else if (nread == -FI_EAGAIN) {
-    // No completions ready
-    *done = 0;
-  }
-  else {
-    // Error
-    struct fi_cq_err_entry err;  // See struct fi_cq_err_entry (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
-    fi_cq_readerr(comm->cq, &err, 0);  // See fi_cq_readerr() (https://github.com/ofiwg/libfabric/blob/main/include/rdma/fi_eq.h)
-
-    // Handle error
-    return ncclSystemError;
-  }
-
-  return ncclSuccess;
-}
-```
-
-**Polling Loop (in NCCL Proxy Thread):**
+test polls the CQ and matches completions back to requests by `op_context`:
 
 ```c
-void nccl_proxy_thread() {
-  while (running) {
-    // Poll all pending requests
-    for (req in pending_requests) {
-      int done;
-      ncclNet->test(req, &done, &size);
-
-      if (done) {
-        // Notify GPU that operation completed
-        signal_completion_to_gpu(req);
-        remove_from_pending(req);
-      }
-    }
-
-    // Small yield if no work
-    if (no_pending) {
-      sched_yield();
-    }
-  }
-}
+int nread = fi_cq_read(comm->cq, entries, CQ_POLL_BATCH);
+// per entry: req == entry->op_context  -> *done=1, *size=entry->len, free_request
+// nread == -FI_EAGAIN -> no completions (*done=0)
+// nread < 0           -> fi_cq_readerr(cq, &err, 0); return error
 ```
+
+Completions belonging to *other* pending requests are processed in place (their
+state advanced), not dropped.
+
+**Polling Loop (in NCCL Proxy Thread):** the proxy thread repeatedly calls
+`test()` on each pending request; when one reports `done`, it signals completion
+to the GPU and drops it from the pending set, `sched_yield()`-ing when idle.
 
 ---
 

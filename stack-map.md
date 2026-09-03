@@ -8,7 +8,7 @@ here to find the right file, then jump to the deep-dive doc for that layer.
 
 Everything below was measured on this workstation on **2026-09-02** against the HEADs in
 the table. Source links are branch-form (`blob/master`, `blob/main`, `tree/master`), per
-the corpus link policy in [PERMALINK_STATUS.md](PERMALINK_STATUS.md), which holds the
+the corpus link policy in [SOURCES.md](SOURCES.md), which holds the
 authoritative snapshot table — this doc does not duplicate it.
 
 ---
@@ -337,7 +337,7 @@ DMA-BUF as the alternative to 5a/5b — it does not duplicate that material.
 ### Cross-references for this layer
 
 - [kernel-efa-driver.md](kernel-efa-driver.md) — kernel EFA driver internals
-- [efa-driver.md](efa-driver.md) — driver capabilities and verbs surface
+- [kernel-efa-driver.md](kernel-efa-driver.md) — driver capabilities and verbs surface
 - [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) — DMA-BUF path
 - [cuda-memory.md](cuda-memory.md) / [rdma-memreg.md](rdma-memreg.md) — memory registration
 
@@ -365,7 +365,7 @@ git clone -b devel https://github.com/amazon-contributing/upstream-to-nvshmem.gi
 ```
 
 To land exactly on the HEADs these docs were verified against, check out the commits in the
-table in §1 (or the authoritative snapshot in [PERMALINK_STATUS.md](PERMALINK_STATUS.md)).
+table in §1 (or the authoritative snapshot in [SOURCES.md](SOURCES.md)).
 The corpus links are branch-form and track current upstream, so a plain clone stays valid;
 the recorded HEADs matter only when you need the exact snapshot the docs describe.
 
@@ -375,5 +375,5 @@ the recorded HEADs matter only when you need the exact snapshot the docs describ
 
 Every path cited here was checked against the live filesystem on this workstation on
 **2026-09-02**, at the HEADs in §1. Source-link and cross-reference verification for the
-whole corpus is tracked in [PERMALINK_STATUS.md](PERMALINK_STATUS.md), which is the
+whole corpus is tracked in [SOURCES.md](SOURCES.md), which is the
 authoritative snapshot table — refer to it rather than any copy.

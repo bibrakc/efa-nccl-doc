@@ -11,7 +11,7 @@ registration for EFA — the part that sits *below* libfabric and the OFI plugin
   Peer Memory (P2P Subsystem)";
 - DMA-BUF from the plugin/libfabric side — `dmabuf-gpu-memory.md`;
 - the userspace CUDA/ROCm allocation and export side — `cuda-memory.md`,
-  `rocm-memory.md`, `neuron-memory.md`;
+  `accelerator-memory.md`, `accelerator-memory.md`;
 - generic MR registration — `rdma-memreg.md`, `lkey-rkey-explained.md`.
 
 What was **undocumented** is *the other end*: what NVIDIA's kernel modules actually
@@ -195,7 +195,7 @@ nothing about DMA-BUF.
   `neuronmem_get()` calls `neuron_p2p_register_va()` and builds the page list from
   `neuron_p2p_va_info.page_info[]` (physical address + page count per entry). Uses a
   4 KB page shift (`NEURON_PAGE_SHIFT 12`), unlike NVIDIA's 64 KB.
-- See `neuron-memory.md` for the userspace side.
+- See `accelerator-memory.md` for the userspace side.
 
 ### How the choice is actually made at runtime
 
@@ -476,7 +476,7 @@ attachment / `dma_resv` machinery.
 - [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) — DMA-BUF from the plugin/libfabric side and the
   viability checks.
 - [cuda-memory.md](cuda-memory.md) — CUDA allocation, pinning, and dmabuf export on the userspace side.
-- `neuron-memory.md` — Trainium/Inferentia memory and the `neuron_p2p_*` userspace side.
+- `accelerator-memory.md` — Trainium/Inferentia memory and the `neuron_p2p_*` userspace side.
 - `rdma-memreg.md` / `lkey-rkey-explained.md` — generic MR registration and the `reg_mr`
   admin command both paths converge on.
-- `rocm-memory.md` — the AMD/ROCr analogue (dmabuf path in `efa_hmem.c` for `FI_HMEM_ROCR`).
+- `accelerator-memory.md` — the AMD/ROCr analogue (dmabuf path in `efa_hmem.c` for `FI_HMEM_ROCR`).

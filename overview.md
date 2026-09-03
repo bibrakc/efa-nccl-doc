@@ -284,7 +284,7 @@ for details.
 
 ### NCCL Message Processing
 - `nccl-message-breakdown-complete.md` - How NCCL breaks down messages for all collectives
-- `nccl-chunk-breakdown.md` - Chunk size calculation and pipeline depth
+- `nccl-message-breakdown-complete.md` - Chunk size calculation and pipeline depth
 - `nccl-buffsize-explained.md` - NCCL_BUFFSIZE channel buffers and pipelining
 
 ### GIN and Expert Parallelism
@@ -295,7 +295,7 @@ for details.
 - `efa-hardware-architecture.md` - Queue pairs, completion queues, hardware capabilities
 - `srd-protocol.md` - Scalable Reliable Datagram protocol
 - `kernel-efa-driver.md` - Linux kernel EFA driver internals
-- `efa-driver.md` - EFA driver architecture
+- `kernel-efa-driver.md` - EFA driver architecture
 
 ### Transport Layer
 - `libfabric-overview.md` - Libfabric API, capabilities, data transfer operations
@@ -318,8 +318,8 @@ for details.
 
 ### GPU and Accelerator Memory
 - `cuda-memory.md` - NVIDIA CUDA memory: dynamic loading, GPUDirect, GDRCopy
-- `neuron-memory.md` - AWS Trainium/Inferentia with P2P registration
-- `rocm-memory.md` - AMD ROCm with HIP API
+- `accelerator-memory.md` - AWS Trainium/Inferentia with P2P registration
+- `accelerator-memory.md` - AMD ROCm with HIP API
 
 ## Performance Considerations
 

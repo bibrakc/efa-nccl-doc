@@ -1,5 +1,7 @@
 # Understanding lkey and rkey (Local Key and Remote Key)
 
+> **Source lookups:** this document records mechanism, defaults, corrections and history. For current function bodies, call graphs and blast radius, query the code graph (`codegraph explore <symbol>`) rather than trusting a pasted copy here.
+
 ## Overview
 
 **lkey** (Local Key) and **rkey** (Remote Key) are protection keys used in RDMA operations to control access to registered memory regions. They are security and validation tokens that allow NICs to verify they're accessing the correct memory with proper permissions.
@@ -234,33 +236,16 @@ fi_write(ep, my_send_buf, size, desc,
 
 ### Key Generation in EFA Driver
 
-From [efa-driver.md](efa-driver.md):
+From [kernel-efa-driver.md](kernel-efa-driver.md):
+
+> Source: `amzn-drivers/kernel/linux/efa/src/efa_verbs.c` — `efa_reg_mr()`. Use `codegraph explore efa_reg_mr` for the current body.
+
+The device generates a single key during registration and assigns it to **both**
+local and remote keys — on EFA the two are always equal:
 
 ```c
-// EFA kernel driver
-int efa_reg_mr(struct ib_pd *ibpd, struct ib_mr *ibmr,
-               u64 start, u64 length, u64 virt_addr,
-               int access_flags)
-{
-  // ... pin pages, create DMA mapping ...
-
-  // Register with EFA device
-  struct efa_com_reg_mr_params params = {
-    .pd = to_epd(ibpd)->pdn,
-    .iova = virt_addr,
-    .mr_length = length,
-    .page_num = npages,
-  };
-
-  // Device generates a key
-  err = efa_com_register_mr(dev->edev, &params, &mr->key);
-
-  // Both lkey and rkey are the same on EFA
-  mr->lkey = mr->key;
-  mr->rkey = mr->key;
-
-  return 0;
-}
+mr->lkey = mr->key;  // device-generated key
+mr->rkey = mr->key;  // same value on EFA
 ```
 
 **EFA Key Characteristics:**
@@ -537,4 +522,4 @@ Historical reasons and flexibility:
 
 - [libfabric-overview.md](libfabric-overview.md) - Memory registration in libfabric
 - [rdma-memreg.md](rdma-memreg.md) - Complete RDMA and memory registration details
-- [efa-driver.md](efa-driver.md) - EFA driver implementation of key generation
+- [kernel-efa-driver.md](kernel-efa-driver.md) - EFA driver implementation of key generation
