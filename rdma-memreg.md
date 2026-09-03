@@ -1,5 +1,7 @@
 # RDMA Operations and Memory Registration
 
+> **Source lookups:** this document explains mechanism and records defaults, corrections and history. For current function bodies, call graphs and blast radius, query the code graph (`codegraph explore <symbol>`) rather than trusting a pasted copy here.
+
 ## RDMA Overview
 
 RDMA (Remote Direct Memory Access) enables direct memory access from one computer's memory to another's without involving the operating system or CPU in the data path.
@@ -138,178 +140,28 @@ can hold:
 
 ### Application Level (NCCL)
 
-```c
-// User provides GPU memory buffer
-float* gpu_buffer;
-cudaMalloc(&gpu_buffer, size);
-
-// NCCL internally registers via plugin
-ncclAllReduce(gpu_buffer, gpu_buffer, count,
-              ncclFloat, ncclSum, comm, stream);
-```
-
 **NCCL's perspective:**
-- Buffers are user-provided
-- May change between calls
+- Buffers are user-provided and may change between calls
 - Must register on-demand
 - Cache registrations when possible
 
+> Source: `src/nccl_ofi_rdma.cpp` — registration entry points `reg_mr`, `reg_mr_on_device`. Use `codegraph explore reg_mr` for the current body and its callers.
+
 ### OFI Plugin Level
 
-```c
-ncclResult_t nccl_net_ofi_regMr(void* comm, void* data,
-                                int size, int type,
-                                void** mhandle)
-{
-  // Check cache
-  struct mr_cache_entry* entry = mr_cache_lookup(data, size);
+On a cache miss the plugin calls `fi_mr_reg()` (or `fi_mr_regattr()` for DMA-BUF) with access flags `FI_SEND | FI_RECV | FI_REMOTE_READ | FI_REMOTE_WRITE`. GPU memory is registered with `FI_HMEM_CUDA` (or `FI_HMEM_NEURON`). On a cache hit the refcount is incremented and the existing handle returned.
 
-  if (entry) {
-    // Cache hit!
-    entry->refcount++;
-    *mhandle = entry->mr;
-    return ncclSuccess;
-  }
-
-  // Cache miss, register new
-  struct fid_mr* mr;
-  uint64_t access = FI_SEND | FI_RECV |
-                    FI_REMOTE_READ | FI_REMOTE_WRITE;
-
-  if (type == NCCL_PTR_CUDA) {
-    // GPU memory
-    ret = fi_mr_reg(domain, data, size, access,
-                    0, 0, FI_HMEM_CUDA, &mr, NULL);
-  } else {
-    // Host memory
-    ret = fi_mr_reg(domain, data, size, access,
-                    0, 0, 0, &mr, NULL);
-  }
-
-  // Add to cache
-  mr_cache_insert(data, size, mr);
-
-  *mhandle = mr;
-  return ncclSuccess;
-}
-```
+> Source: `src/nccl_ofi_rdma.cpp` — `nccl_net_ofi_rdma_domain_t::reg_mr()`. Use `codegraph explore reg_mr` for details.
 
 ### Libfabric Level
 
-```c
-int fi_mr_reg(struct fid_domain *domain,
-              const void *buf, size_t len,
-              uint64_t access, uint64_t offset,
-              uint64_t requested_key, uint64_t flags,
-              struct fid_mr **mr, void *context)
-{
-  // EFA provider implementation
-  struct efa_domain *efa_domain = container_of(domain, ...);
+The EFA provider maintains its own internal MR cache. On a miss it calls `ibv_reg_mr()` (host) or `ibv_reg_dmabuf_mr()` (GPU via DMA-BUF) into rdma-core.
 
-  // Check provider's internal cache
-  struct fid_mr *cached_mr = efa_mr_cache_find(buf, len);
-  if (cached_mr) {
-    *mr = cached_mr;
-    return 0;
-  }
-
-  // Not cached, call ibverbs
-  struct ibv_mr *ibv_mr;
-
-  if (flags & FI_HMEM_CUDA) {
-    // GPU memory registration
-    ibv_mr = ibv_reg_dmabuf_mr(efa_domain->pd, offset, len,
-                               (uint64_t)buf, dmabuf_fd,
-                               access_flags);
-  } else {
-    // Host memory registration
-    ibv_mr = ibv_reg_mr(efa_domain->pd, (void *)buf, len,
-                        access_flags);
-  }
-
-  // Wrap in libfabric MR
-  struct efa_mr *efa_mr = calloc(1, sizeof(*efa_mr));
-  efa_mr->ibv_mr = ibv_mr;
-  efa_mr->mr_fid.fid.fclass = FI_CLASS_MR;
-  // ...
-
-  // Add to provider cache
-  efa_mr_cache_insert(efa_mr);
-
-  *mr = &efa_mr->mr_fid;
-  return 0;
-}
-```
+> Source: libfabric EFA provider `prov/efa/`. Use `codegraph explore efa_mr_cache_find` for provider-level caching.
 
 ### Driver Level (ibverbs → kernel)
 
-```c
-// User space (libibverbs)
-struct ibv_mr* ibv_reg_mr(struct ibv_pd *pd,
-                          void *addr, size_t length,
-                          int access)
-{
-  struct ibv_reg_mr_cmd cmd = {
-    .pd_handle = pd->handle,
-    .addr = (uint64_t)addr,
-    .length = length,
-    .access_flags = access,
-  };
-
-  struct ibv_reg_mr_resp resp;
-
-  // Ioctl to kernel
-  ioctl(pd->context->cmd_fd, IBV_CMD_REG_MR, &cmd, &resp);
-
-  struct ibv_mr *mr = malloc(sizeof(*mr));
-  mr->lkey = resp.lkey;
-  mr->rkey = resp.rkey;
-  mr->addr = addr;
-  mr->length = length;
-
-  return mr;
-}
-```
-
-```c
-// Kernel space (EFA driver)
-int efa_reg_mr(struct ib_pd *ibpd,
-               struct ib_mr *ibmr,
-               u64 start, u64 length,
-               u64 virt_addr, int access_flags)
-{
-  struct efa_dev *dev = to_edev(ibpd->device);
-  struct efa_mr *mr = to_emr(ibmr);
-
-  // Get user pages (pin them)
-  npages = ib_umem_num_pages(mr->umem);
-  mr->umem = ib_umem_get(ibpd->device, start, length, access_flags);
-
-  // Create DMA mapping (IOMMU)
-  dma_map_sg(dev->dma_device, mr->umem->sg_head.sgl,
-             mr->umem->nmap, DMA_BIDIRECTIONAL);
-
-  // Register with EFA device
-  struct efa_com_reg_mr_params params = {
-    .pd = to_epd(ibpd)->pdn,
-    .iova = virt_addr,
-    .mr_length = length,
-    // r3.3.0: page_shift is derived from the MR's chosen page size
-    // (order_base_2(mr->ibmr.page_size)), not hard-wired to host PAGE_SHIFT.
-    // This is what enables >4GB single-MR page sizes.
-    .page_shift = order_base_2(mr->ibmr.page_size),
-    .page_num = npages,
-  };
-
-  err = efa_com_register_mr(dev->edev, &params, &mr->key);
-
-  // Generate keys
-  mr->lkey = mr->key;
-  mr->rkey = mr->key;
-
-  return 0;
-}
-```
+The kernel path pins pages (`ib_umem_get()`), creates IOMMU mappings (`dma_map_sg()`), programs the EFA device, and generates lkey/rkey.
 
 **Kernel Operations:**
 1. **Pin pages**: `get_user_pages()` / `ib_umem_get()`
@@ -318,64 +170,18 @@ int efa_reg_mr(struct ib_pd *ibpd,
 4. **Register with NIC**: Device command
 5. **Generate keys**: lkey (local) and rkey (remote)
 
+> Source: `amzn-drivers/kernel/linux/efa/src/efa_verbs.c` — `efa_reg_mr()`, `efa_reg_dmabuf_mr()`. Use `codegraph explore efa_reg_mr` for the current bodies.
+
 ## GPU Memory Registration
 
 ### Traditional Method (Peer Direct)
 
-Older approach, now deprecated:
-
-```c
-// NVIDIA GPUDirect RDMA via peer-direct
-1. Get GPU BAR (Base Address Register)
-2. Create peer mapping in driver
-3. Register GPU physical address
-```
-
-**Issues:**
-- Kernel module required
-- Complex to maintain
-- Limited compatibility
+Older approach, now deprecated: NVIDIA GPUDirect RDMA via peer-direct required an out-of-tree kernel module, was complex to maintain, and had limited compatibility.
 
 ### Modern Method (dmabuf)
 
-Current approach using Linux DMA buffer:
+Current approach using Linux DMA buffer (kernel 5.12+). GPU memory is exported as a dmabuf file descriptor and registered via `ibv_reg_dmabuf_mr()`. See [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) for full details.
 
-```c
-// GPU memory registration via dmabuf
-int register_gpu_memory(void *gpu_ptr, size_t len) {
-  // 1. Export GPU memory as dmabuf
-  cudaExternalMemoryHandleDesc desc = {
-    .type = cudaExternalMemoryHandleTypeOpaqueFd,
-    .size = len,
-  };
-
-  cudaExternalMemory_t ext_mem;
-  cudaImportExternalMemory(&ext_mem, &desc);
-
-  int dmabuf_fd;
-  cudaExternalMemoryGetMappedBuffer(&dmabuf_fd, ext_mem, ...);
-
-  // 2. Register dmabuf with ibverbs
-  struct ibv_mr *mr;
-  mr = ibv_reg_dmabuf_mr(pd, 0, len,
-                         (uint64_t)gpu_ptr, dmabuf_fd,
-                         IBV_ACCESS_LOCAL_WRITE |
-                         IBV_ACCESS_REMOTE_READ |
-                         IBV_ACCESS_REMOTE_WRITE);
-
-  close(dmabuf_fd);
-
-  return mr;
-}
-```
-
-**Benefits:**
-- Standard Linux interface
-- Better compatibility
-- Cleaner implementation
-- Required kernel 5.12+
-
-**Under the hood:**
 ```
 CUDA Driver
     ↓ Export as dmabuf
@@ -406,208 +212,29 @@ With cache:
 
 **Approximately 6x speedup for subsequent calls!**
 
-### Cache Structure
-
-**`struct mr_cache`** - Memory registration cache (conceptual structure showing cache organization):
-
-```c
-struct mr_cache {
-  // Hash table or tree
-  struct mr_entry {
-    void *addr;              // Buffer address
-    size_t length;           // Buffer size
-    struct fid_mr *mr;       // Registered MR
-    int refcount;            // Reference count
-    uint64_t last_used;      // LRU timestamp
-    struct mr_entry *next;   // Hash chain
-  } *entries[CACHE_SIZE];
-
-  pthread_mutex_t lock;      // Protect cache
-
-  // Statistics
-  uint64_t hits;
-  uint64_t misses;
-  uint64_t evictions;
-};
-```
-
-### Cache Lookup
-
-```c
-struct fid_mr* mr_cache_lookup(void *addr, size_t len) {
-  // Hash by address
-  uint32_t hash = hash_function(addr) % CACHE_SIZE;
-
-  pthread_mutex_lock(&cache.lock);
-
-  struct mr_entry *entry = cache.entries[hash];
-  while (entry) {
-    // Exact match required
-    if (entry->addr == addr && entry->length == len) {
-      // Hit!
-      entry->refcount++;
-      entry->last_used = get_timestamp();
-      cache.hits++;
-
-      pthread_mutex_unlock(&cache.lock);
-      return entry->mr;
-    }
-
-    entry = entry->next;
-  }
-
-  // Miss
-  cache.misses++;
-  pthread_mutex_unlock(&cache.lock);
-  return NULL;
-}
-```
+See [mr-cache-implementation.md](mr-cache-implementation.md) for the full cache implementation details (data structures, API, RAII lifecycle).
 
 ### Cache Invalidation
 
-**Challenge**: What if registered memory is freed or modified?
-
-```
-Timeline:
-1. Register buffer A (0x1000) ─→ Cache
-2. Free buffer A
-3. Malloc buffer B ─→ Gets same address 0x1000!
-4. Cache hit on 0x1000 ─→ WRONG! (stale registration)
-```
+**Challenge**: What if registered memory is freed or modified? A stale cache entry maps the old physical pages to a recycled virtual address.
 
 **Solutions:**
 
 #### Memory Hooks (memhooks)
 
-```c
-// Override malloc/free
-void free(void *ptr) {
-  // Invalidate MR cache entry
-  mr_cache_invalidate(ptr);
+LD_PRELOAD intercepts libc `free`/`mmap`/`munmap` and invalidates the MR cache on every deallocation.
 
-  // Call real free
-  real_free(ptr);
-}
-
-void* mmap(void *addr, size_t length, ...) {
-  void *result = real_mmap(addr, length, ...);
-
-  // If unmapping, invalidate cache
-  if (flags & MAP_FIXED) {
-    mr_cache_invalidate(addr);
-  }
-
-  return result;
-}
-```
-
-**Implementation:**
-- LD_PRELOAD intercepts libc functions
-- Tracks all memory operations
-- Invalidates cache on free/munmap
-
-**Configuration:**
 ```bash
 FI_MR_CACHE_MONITOR=memhooks
 ```
 
 #### Userfaultfd
 
-```c
-// Use Linux userfaultfd to monitor memory
-int uffd = syscall(__NR_userfaultfd, O_CLOEXEC | O_NONBLOCK);
+Linux `userfaultfd` monitors memory ranges in-kernel. On `UFFD_EVENT_UNMAP` the cache is invalidated. More reliable and lower overhead than hooks.
 
-// Register memory range
-struct uffdio_register uffdio_register = {
-  .range = { .start = addr, .len = len },
-  .mode = UFFDIO_REGISTER_MODE_MISSING |
-          UFFDIO_REGISTER_MODE_WP,
-};
-ioctl(uffd, UFFDIO_REGISTER, &uffdio_register);
-
-// Monitor thread
-while (1) {
-  struct uffd_msg msg;
-  read(uffd, &msg, sizeof(msg));
-
-  if (msg.event == UFFD_EVENT_UNMAP) {
-    // Memory unmapped, invalidate cache
-    mr_cache_invalidate(msg.arg.remove.start);
-  }
-}
-```
-
-**Benefits:**
-- Kernel-supported
-- More reliable than hooks
-- Lower overhead
-
-**Configuration:**
 ```bash
 FI_MR_CACHE_MONITOR=userfaultfd
 ```
-
-#### Reference Counting
-
-**`struct mr_entry`** - Cache entry with reference counting (conceptual):
-
-```c
-struct mr_entry {
-  int refcount;
-  // ...
-};
-
-// On regMr
-entry->refcount++;
-
-// On deregMr
-entry->refcount--;
-if (entry->refcount == 0) {
-  // Safe to evict
-}
-```
-
-**Prevents eviction of in-use registrations**
-
-### Cache Eviction
-
-When cache is full:
-
-```c
-void mr_cache_evict() {
-  struct mr_entry *victim = NULL;
-  uint64_t oldest = UINT64_MAX;
-
-  // LRU eviction
-  for (int i = 0; i < CACHE_SIZE; i++) {
-    struct mr_entry *entry = cache.entries[i];
-    while (entry) {
-      if (entry->refcount == 0 &&
-          entry->last_used < oldest) {
-        oldest = entry->last_used;
-        victim = entry;
-      }
-      entry = entry->next;
-    }
-  }
-
-  if (victim) {
-    // Deregister
-    fi_close(&victim->mr->fid);
-
-    // Remove from cache
-    remove_entry(victim);
-    free(victim);
-
-    cache.evictions++;
-  }
-}
-```
-
-**Eviction Policies:**
-- **LRU (Least Recently Used)**: Evict oldest
-- **LFU (Least Frequently Used)**: Evict least used
-- **Size-aware**: Evict largest first
 
 ### Cache Configuration
 
@@ -626,24 +253,16 @@ FI_MR_CACHE_MONITOR=memhooks    # or userfaultfd, disabled
 # MR caching on this stack is controlled at two levels:
 OFI_NCCL_MR_CACHE_DISABLE=0     # plugin-level cache (default 0 = cache enabled)
 FI_EFA_MR_CACHE_ENABLE=1        # provider-level cache (default 1)
+
+# EFA-specific size/count limits
+FI_EFA_MR_MAX_CACHED_SIZE=<bytes>   # max region size to cache
+FI_EFA_MR_MAX_CACHED_COUNT=<count>  # max number of cached regions
 ```
 
 ## RDMA Operations in Detail
 
 ### RDMA Write
 
-```c
-// Sender
-ssize_t fi_write(struct fid_ep *ep,
-                 const void *buf, size_t len,
-                 void *desc,
-                 fi_addr_t dest_addr,
-                 uint64_t remote_addr,
-                 uint64_t remote_key,
-                 void *context);
-```
-
-**Flow:**
 ```
 Sender                          Receiver
 ──────                          ────────
@@ -659,58 +278,8 @@ Sender                          Receiver
 - **Requires key exchange**: Out-of-band communication
 - **Ordering**: May need fence/flush for visibility
 
-#### Key Exchange Protocol
-
-```c
-// Setup phase
-void exchange_keys(struct connection *conn) {
-  // 1. Register local receive buffer
-  fi_mr_reg(domain, my_recv_buf, size, FI_REMOTE_WRITE, ...);
-
-  uint64_t my_addr = (uint64_t)my_recv_buf;
-  uint64_t my_key = fi_mr_key(mr);
-
-  // 2. Send to peer (control message)
-  struct key_exchange_msg msg = {
-    .addr = my_addr,
-    .key = my_key,
-  };
-  fi_send(ep, &msg, sizeof(msg), ...);
-
-  // 3. Receive from peer
-  struct key_exchange_msg peer_msg;
-  fi_recv(ep, &peer_msg, sizeof(peer_msg), ...);
-
-  // 4. Store peer's info
-  conn->remote_addr = peer_msg.addr;
-  conn->remote_key = peer_msg.key;
-}
-
-// Data phase
-void rdma_write_to_peer(struct connection *conn,
-                        void *local_buf, size_t len) {
-  // Use stored remote_addr and remote_key
-  fi_write(ep, local_buf, len, desc,
-           conn->dest_addr,
-           conn->remote_addr,
-           conn->remote_key,
-           context);
-}
-```
-
 ### RDMA Read
 
-```c
-ssize_t fi_read(struct fid_ep *ep,
-                void *buf, size_t len,
-                void *desc,
-                fi_addr_t src_addr,
-                uint64_t remote_addr,
-                uint64_t remote_key,
-                void *context);
-```
-
-**Flow:**
 ```
 Initiator                       Target
 ─────────                       ──────
@@ -725,7 +294,7 @@ Initiator                       Target
 
 ### Flush/Fence
 
-RDMA writes are asynchronous and may be reordered:
+RDMA writes are asynchronous and may be reordered. NCCL's `iflush` issues a dummy `fi_read` to force prior writes to be visible.
 
 ```
 Problem:
@@ -738,77 +307,15 @@ Solution:
   fi_read(dummy)  ─────────────→ Forces ordering
 ```
 
-**EFA Flush:**
-```c
-// NCCL's iflush implementation in OFI plugin
-ncclResult_t nccl_net_ofi_iflush(...) {
-  // Issue dummy read to ensure prior writes are visible
-  fi_read(ep, dummy_buf, 0, NULL,
-          remote_addr, 0, 0, context);
-
-  // Completion of read guarantees writes are visible
-}
-```
+> Source: `src/nccl_ofi_rdma.cpp` — `nccl_net_ofi_iflush()`. Use `codegraph explore iflush` for the current implementation.
 
 ## Performance Optimization
 
 ### Reduce Registration Overhead
 
-```c
-// Bad: Register on every transfer
-for (int i = 0; i < 1000; i++) {
-  fi_mr_reg(domain, buf, size, ...);  // 500 μs each!
-  fi_send(ep, buf, size, ...);
-  fi_close(&mr->fid);
-}
-// Total: ~500 ms just for registration!
-
-// Good: Register once, reuse
-fi_mr_reg(domain, buf, size, &mr, ...);  // 500 μs once
-for (int i = 0; i < 1000; i++) {
-  fi_send(ep, buf, size, fi_mr_desc(mr), ...);
-}
-fi_close(&mr->fid);
-// Total: ~500 μs + transfer time
-```
-
-### Use Buffers Wisely
-
-```c
-// Bad: Many small buffers
-for (int i = 0; i < 100; i++) {
-  void *buf = malloc(4096);
-  fi_mr_reg(..., buf, 4096, ...);  // 100 registrations!
-}
-
-// Good: One large buffer, partition
-void *buf = malloc(100 * 4096);
-fi_mr_reg(..., buf, 100 * 4096, ...);  // 1 registration
-
-// Use chunks
-for (int i = 0; i < 100; i++) {
-  void *chunk = buf + i * 4096;
-  fi_send(ep, chunk, 4096, ...);
-}
-```
-
-### Pre-register
-
-```c
-// At initialization
-void init() {
-  // Pre-register common buffers
-  for (int i = 0; i < NUM_BUFFERS; i++) {
-    cudaMalloc(&buffers[i], BUFFER_SIZE);
-    fi_mr_reg(..., buffers[i], BUFFER_SIZE, &mrs[i], ...);
-  }
-}
-
-// At runtime (no registration overhead)
-void transfer() {
-  fi_send(ep, buffers[0], size, fi_mr_desc(mrs[0]), ...);
-}
-```
+- **Register once, reuse**: Pre-register buffers and pass the MR descriptor on every send/recv.
+- **One large buffer, partition**: Register a single contiguous allocation and carve it into chunks rather than registering many small allocations.
+- **Pre-register at init**: Register hot buffers during initialization so no registration cost is on the data path.
 
 ### Monitor Cache Performance
 

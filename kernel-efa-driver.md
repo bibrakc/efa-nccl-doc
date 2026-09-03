@@ -5,11 +5,14 @@
 The **EFA kernel driver** is a Linux kernel module that provides the interface between userspace RDMA applications and the EFA hardware. It implements the kernel-side of the RDMA verbs API and manages hardware resources.
 
 **GitHub**: [kernel/linux/efa/](https://github.com/amzn/amzn-drivers/tree/master/kernel/linux/efa)
+(out-of-tree build; in-tree it lives at `drivers/infiniband/hw/efa/`).
 
 **Driver Version**: **r3.3.0** (`DRV_MODULE_VER_MAJOR/MINOR/SUBMINOR = 3/3/0` in
 [efa_main.c](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_main.c) lines ~42-44;
 authoritative change list in
 [RELEASENOTES.md](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/RELEASENOTES.md)).
+
+> **Source lookups:** this document explains mechanism and records defaults, corrections and history. For current function bodies, call graphs and blast radius, query the code graph (`codegraph explore <symbol>`) rather than trusting a pasted copy here.
 
 ### Firmware and Hardware Boundary (what is open vs closed)
 
@@ -122,347 +125,82 @@ networking. All items below are verified in
 └─────────────────────────────────────┘
 ```
 
+## EFA Device Model (PCIe)
+
+Example `lspci` view of an EFA function:
+
+```
+00:06.0 Ethernet controller: Amazon.com, Inc. Elastic Fabric Adapter (EFA)
+    Subsystem: Amazon.com, Inc. Device efa0
+    Flags: bus master, fast devsel, latency 0
+    Memory at 82000000 (32-bit, non-prefetchable) [size=32M]   # BAR0 registers
+    Memory at 83000000 (32-bit, non-prefetchable) [size=256K]  # BAR2 doorbells
+    Capabilities: [40] Express Endpoint, MSI 00
+    Capabilities: [100] Advanced Error Reporting
+    Capabilities: [150] Device Serial Number
+```
+
+- **BAR0** — device registers (MMIO), mapped non-cached; admin-queue control, stats,
+  configuration registers. Access via `readl()`/`writel()` with barriers.
+- **BAR2** — doorbell / memory space (SQ/RQ/CQ doorbells, queue buffers), mapped
+  write-combining (`ioremap_wc`) for the fast path. Doorbell rings are direct MMIO
+  writes with no barrier (a `writel` to device memory is already ordered).
+- **MSI-X** interrupt vectors (see Interrupts vs Polling below).
+- Underlying link is **PCIe Gen4 x16** — ~25 GB/s bidirectional, which is the
+  practical data-path ceiling per adapter.
+
+**Supported EFA generations** — the PCI device table
+([efa_main.c](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_main.c) lines ~27-38)
+enumerates VF device IDs:
+
+| Device ID | Generation | Note |
+|-----------|------------|------|
+| `0xefa0` (`PCI_DEV_ID_EFA0_VF`) | Gen 1 | |
+| `0xefa1` (`PCI_DEV_ID_EFA1_VF`) | Gen 2 | p4d/p4de |
+| `0xefa2` (`PCI_DEV_ID_EFA2_VF`) | Gen 3 | |
+| `0xefa3` (`PCI_DEV_ID_EFA3_VF`) | Gen 4 | |
+| `0xefa4` (`PCI_DEV_ID_EFA4_VF`) | — | **new in r3.3.0** |
+
+> Source: `efa_main.c` — `efa_pci_tbl[]`, `efa_pci_driver`, `efa_device_init()`
+> (probe) / `efa_device_remove()`. Use `codegraph explore efa_device_init` for the
+> current probe flow (PCI enable → 64-bit DMA mask → request/`ioremap` BAR0 & BAR2 →
+> `pci_set_master` → `efa_com_admin_init` → `efa_com_get_device_attr` →
+> `efa_request_mgmnt_irq` → `ib_register_device` → `efa_sysfs_init`).
+
 ## Key Components
 
-### 1. Driver Initialization (`efa_main.c`)
-
-**PCI Device Table** - Supported EFA Generations:
-
-```c
-// From efa_main.c (lines ~27-38)
-static const struct pci_device_id efa_pci_tbl[] = {
-    { PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA0_VF) },  // Gen 1: 0xefa0
-    { PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA1_VF) },  // Gen 2: 0xefa1
-    { PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA2_VF) },  // Gen 3: 0xefa2
-    { PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA3_VF) },  // Gen 4: 0xefa3
-    { PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA4_VF) },  // 0xefa4 (new in r3.3.0)
-    { }
-};
-```
-
-**PCI Driver Structure**:
-
-```c
-static struct pci_driver efa_pci_driver = {
-    .name           = "efa",
-    .id_table       = efa_pci_tbl,
-    .probe          = efa_device_init,   // Called on device discovery
-    .remove         = efa_device_remove, // Called on device removal
-};
-```
-
-**Device Initialization Flow**:
-
-```c
-// From efa_main.c (simplified)
-static int efa_device_init(struct pci_dev *pdev,
-                           const struct pci_device_id *id)
-{
-    struct efa_dev *dev;
-    int err;
-
-    // 1. Enable PCI device
-    err = pci_enable_device_mem(pdev);
-
-    // 2. Set DMA mask (64-bit addressing)
-    err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
-
-    // 3. Request PCI BARs
-    //    BAR 0: Register space (MMIO)
-    //    BAR 2: Memory space (for doorbells)
-    err = pci_request_selected_regions(pdev, EFA_BASE_BAR_MASK, "efa");
-
-    // 4. Map BARs to kernel virtual address
-    dev->reg_bar = ioremap(pci_resource_start(pdev, EFA_REG_BAR),
-                           pci_resource_len(pdev, EFA_REG_BAR));
-    dev->mem_bar = ioremap(pci_resource_start(pdev, EFA_MEM_BAR),
-                           pci_resource_len(pdev, EFA_MEM_BAR));
-
-    // 5. Enable bus mastering (for DMA)
-    pci_set_master(pdev);
-
-    // 6. Initialize admin queue (control path)
-    err = efa_com_admin_init(&dev->edev, &aenq_handlers);
-
-    // 7. Query device attributes
-    err = efa_com_get_device_attr(&dev->edev, &dev->dev_attr);
-
-    // 8. Set up MSI-X interrupts
-    err = efa_request_mgmnt_irq(dev);
-
-    // 9. Register with RDMA core (creates /dev/infiniband/uverbsN)
-    err = ib_register_device(&dev->ibdev, "efa_%d", &pdev->dev);
-
-    // 10. Create sysfs entries
-    efa_sysfs_init(dev);
-
-    return 0;
-}
-```
-
-### 2. Memory Regions (BAR Mapping)
-
-EFA uses two PCI Base Address Registers (BARs):
-
-```c
-#define EFA_REG_BAR 0  // Register BAR (control/status registers)
-#define EFA_MEM_BAR 2  // Memory BAR (doorbells, buffers)
-
-// BAR 0: Control Registers
-//   - Admin queue control
-//   - Device stats
-//   - Configuration registers
-//   Mapped with: ioremap()
-//   Access: readl()/writel() with barriers
-
-// BAR 2: Doorbell/Memory Space
-//   - Queue doorbells (SQ, RQ, CQ)
-//   - Fast path (MMIO writes to ring doorbells)
-//   Mapped with: ioremap_wc() (write-combining for performance)
-//   Access: Direct MMIO writes (no barriers)
-```
-
-### 3. Verbs Operations (`efa_verbs.c` - 99KB!)
-
-This is the **largest file** in the driver, implementing all RDMA verbs.
-
-#### Device Context
-
-```c
-// From efa_verbs.c
-int efa_alloc_ucontext(struct ib_ucontext *ibucontext,
-                       struct ib_udata *udata)
-{
-    struct efa_ucontext *ucontext = to_eucontext(ibucontext);
-    struct efa_dev *dev = to_edev(ibucontext->device);
-
-    // Allocate UAR (User Access Region) for doorbells
-    ucontext->db_bar_addr = dev->mem_bar;
-    ucontext->db_bar_len = dev->db_bar_len;
-
-    // Userspace will mmap() this later
-    resp.cmds_supp_udata_mask |= EFA_USER_CMDS_SUPP_UDATA_QUERY_DEVICE;
-
-    return ib_copy_to_udata(udata, &resp, sizeof(resp));
-}
-```
-
-#### Protection Domain
-
-```c
-int efa_alloc_pd(struct ib_pd *ibpd, struct ib_udata *udata)
-{
-    struct efa_dev *dev = to_edev(ibpd->device);
-    struct efa_pd *pd = to_epd(ibpd);
-
-    // Allocate PD from hardware
-    err = efa_com_alloc_pd(&dev->edev, &result);
-
-    pd->pdn = result.pdn;  // Protection domain number
-
-    return 0;
-}
-```
-
-#### Memory Registration
-
-```c
-// Standard memory registration (CPU memory)
-struct ib_mr *efa_reg_mr(struct ib_pd *ibpd, u64 start, u64 length,
-                         u64 virt_addr, int access_flags,
-                         struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:2799](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.c))
-{
-    struct efa_dev *dev = to_edev(ibpd->device);
-    struct efa_mr *mr;
-    struct efa_com_reg_mr_params params = {};
-    struct efa_com_reg_mr_result result = {};
-
-    // 1. Allocate MR structure
-    mr = kzalloc(sizeof(*mr), GFP_KERNEL);
-
-    // 2. Pin user pages in memory
-    mr->umem = ib_umem_get(ibpd->device, start, length, access_flags);
-
-    // 3. Create page list for hardware
-    //    Converts umem scatter-gather list to EFA format
-    params.iova = virt_addr;
-    params.length = length;
-    params.page_shift = order_base_2(mr->umem->page_size);
-    params.page_num = ib_umem_num_pages(mr->umem);
-
-    // Build physical address list
-    err = pbl_create(dev, &mr->pbl, mr->umem, params.page_num);
-
-    // 4. Register with EFA hardware
-    err = efa_com_register_mr(&dev->edev, &params, &result);
-
-    // 5. Hardware returns keys
-    mr->ibmr.lkey = result.l_key;
-    mr->ibmr.rkey = result.r_key;
-
-    return &mr->ibmr;
-}
-
-// DMA-BUF memory registration (GPU memory)
-#ifdef HAVE_MR_DMABUF
-struct ib_mr *efa_reg_user_mr_dmabuf(struct ib_pd *ibpd, u64 start, u64 length,
-                                     u64 virt_addr, int dmabuf_fd,
-                                     int access_flags, struct ib_udata *udata)
-{
-    struct efa_dev *dev = to_edev(ibpd->device);
-    struct efa_mr *mr;
-    struct dma_buf *dmabuf;
-    struct dma_buf_attachment *attachment;
-    struct sg_table *sgt;
-
-    mr = kzalloc(sizeof(*mr), GFP_KERNEL);
-
-    // 1. Get dmabuf object
-    dmabuf = dma_buf_get(dmabuf_fd);
-
-    // 2. Attach this device to dmabuf
-    attachment = dma_buf_attach(dmabuf, &dev->pdev->dev);
-
-    // 3. Map dmabuf pages (get scatter-gather table)
-    sgt = dma_buf_map_attachment(attachment, DMA_BIDIRECTIONAL);
-
-    // 4. Create page list from scatter-gather table
-    err = pbl_create_from_sgt(dev, &mr->pbl, sgt, start, length);
-
-    // 5. Register with hardware (same as regular MR)
-    err = efa_com_register_mr(&dev->edev, &params, &result);
-
-    mr->ibmr.lkey = result.l_key;
-    mr->ibmr.rkey = result.r_key;
-
-    // Store dmabuf info for cleanup
-    mr->dmabuf = dmabuf;
-    mr->dmabuf_attach = attachment;
-    mr->dmabuf_sgt = sgt;
-
-    return &mr->ibmr;
-}
-#endif
-
-// Memory deregistration
-int efa_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:3065](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.c))
-{
-    struct efa_dev *dev = to_edev(ibmr->device);
-    struct efa_mr *mr = to_emr(ibmr);
-
-    // 1. Deregister from hardware
-    efa_com_dereg_mr(&dev->edev, &params);
-
-    // 2. Clean up dmabuf (if applicable)
-#ifdef HAVE_MR_DMABUF
-    if (mr->dmabuf) {
-        dma_buf_unmap_attachment(mr->dmabuf_attach, mr->dmabuf_sgt,
-                                DMA_BIDIRECTIONAL);
-        dma_buf_detach(mr->dmabuf, mr->dmabuf_attach);
-        dma_buf_put(mr->dmabuf);
-    }
-#endif
-
-    // 3. Release pinned pages
-    if (mr->umem)
-        ib_umem_release(mr->umem);
-
-    // 4. Free page list
-    pbl_destroy(dev, &mr->pbl);
-
-    kfree(mr);
-    return 0;
-}
-```
-
-#### Queue Pair Creation
-
-```c
-int efa_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *init_attr,
-                  struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:1216](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.c))
-{
-    struct efa_dev *dev = to_edev(ibqp->pd->device);
-    struct efa_qp *qp = to_eqp(ibqp);
-    struct efa_com_create_qp_params params = {};
-    struct efa_com_create_qp_result result = {};
-
-    // 1. Allocate queue buffers in userspace
-    //    Userspace allocates SQ/RQ buffers, tells us via udata
-
-    err = ib_copy_from_udata(&cmd, udata, sizeof(cmd));
-
-    // 2. Create queue pair in hardware
-    params.qp_type = init_attr->qp_type;  // EFA_ADMIN_QP_TYPE_SRD (or UD)
-    params.send_cq_idx = to_ecq(init_attr->send_cq)->cq_idx;
-    params.recv_cq_idx = to_ecq(init_attr->recv_cq)->cq_idx;
-    params.sq_depth = init_attr->cap.max_send_wr;
-    params.rq_depth = init_attr->cap.max_recv_wr;
-
-    err = efa_com_create_qp(&dev->edev, &params, &result);
-
-    // 3. Hardware returns QP number
-    qp->qp_handle = result.qp_handle;
-    qp->qp_num = result.qp_num;
-
-    // 4. Set up doorbell addresses (for userspace mmap)
-    qp->sq_db_offset = result.sq_db_offset;
-    qp->rq_db_offset = result.rq_db_offset;
-    qp->llq_desc_offset = result.llq_descriptors_offset;
-
-    // 5. Return info to userspace
-    resp.qp_handle = result.qp_handle;
-    resp.qp_num = result.qp_num;
-    resp.sq_db_offset = result.sq_db_offset;
-    resp.rq_db_offset = result.rq_db_offset;
-
-    err = ib_copy_to_udata(udata, &resp, sizeof(resp));
-
-    return 0;
-}
-```
-
-#### Completion Queue Creation
-
-```c
-int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
-                  struct ib_udata *udata)  // ([kernel/linux/efa/src/efa_verbs.c:2147](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_verbs.c))
-{
-    struct efa_dev *dev = to_edev(ibcq->device);
-    struct efa_cq *cq = to_ecq(ibcq);
-    struct efa_com_create_cq_params params = {};
-    struct efa_com_create_cq_result result = {};
-
-    // 1. Get CQ size from userspace
-    err = ib_copy_from_udata(&cmd, udata, sizeof(cmd));
-
-    // 2. Create CQ in hardware
-    params.cq_depth = attr->cqe;
-    params.num_sub_cqs = cmd.num_sub_cqs;
-
-    err = efa_com_create_cq(&dev->edev, &params, &result);
-
-    // 3. Store CQ info
-    cq->cq_idx = result.cq_idx;
-    cq->cq_handle = result.cq_handle;
-
-    // 4. Set up CQ buffer info for userspace mmap
-    resp.cq_idx = result.cq_idx;
-    resp.cq_actual_depth = result.actual_depth;
-
-    err = ib_copy_to_udata(udata, &resp, sizeof(resp));
-
-    // 5. Register for interrupt notification
-#ifdef HAVE_XARRAY
-    xa_store(&dev->cqs_xa, cq->cq_idx, cq, GFP_KERNEL);
-#else
-    dev->cqs_arr[cq->cq_idx] = cq;
-#endif
-
-    return 0;
-}
-```
-
-### 3b. GPU & Accelerator Peer Memory (P2P Subsystem)
+### 1. Verbs Operations (`efa_verbs.c`)
+
+The largest file in the driver (~99 KB), implementing all RDMA verbs: device context
+and UAR allocation, protection domains, memory registration, QP/CQ creation. All of
+these are control-path setup; once queues and doorbells are mapped into userspace the
+data path runs without the kernel.
+
+> Source: `efa_verbs.c` — `efa_alloc_ucontext()`, `efa_alloc_pd()`, `efa_reg_mr()`
+> (CPU memory), `efa_reg_user_mr_dmabuf()` (GPU memory), `efa_dereg_mr()`,
+> `efa_create_qp()`, `efa_create_cq()`. Use `codegraph explore <symbol>` for current
+> bodies.
+
+Mechanism notes worth keeping:
+
+- **`efa_reg_mr()`** pins user pages with `ib_umem_get()`, builds a physical-address
+  list (`pbl_create`), issues the `reg_mr` admin command, and returns hardware
+  `lkey`/`rkey`. Memory registration is **expensive** (100–500 μs) — userspace must
+  cache registrations.
+- **`efa_reg_user_mr_dmabuf()`** is the DMA-BUF (GPU memory) path: `dma_buf_get(fd)` →
+  `dma_buf_attach()` → `dma_buf_map_attachment()` → build PBL from the scatter-gather
+  table → same `reg_mr` admin command. Compiled under **`HAVE_MR_DMABUF`**, with
+  **`HAVE_IB_UMEM_DMABUF_PINNED`** selecting the pinned-import variant. `efa_dereg_mr()`
+  tears the DMA-BUF attachment down under the same `HAVE_MR_DMABUF` guard.
+- **`efa_create_qp()`** — userspace allocates the SQ/RQ buffers and passes them via
+  `udata`; the driver issues `create_qp` (type `EFA_ADMIN_QP_TYPE_SRD` or UD) and
+  returns the QP number plus **SQ/RQ doorbell offsets** and the LLQ descriptor offset
+  for userspace to `mmap()`.
+- **`efa_create_cq()`** — issues `create_cq`, returns the CQ index and actual depth,
+  and registers the CQ for interrupt notification (`xa_store` into `cqs_xa` when
+  `HAVE_XARRAY`, else the `cqs_arr` fallback).
+
+### 2. GPU & Accelerator Peer Memory (P2P Subsystem)
 
 Registering **device** memory (GPU/accelerator) for RDMA is fundamentally different
 from host memory: the pages live behind another device's BAR, not in system RAM, so
@@ -471,8 +209,15 @@ the EFA driver cannot just `get_user_pages()`. The driver has a dedicated peer-m
 pinned and translated to DMA addresses, with one pluggable provider per accelerator
 family.
 
+> The deep treatment of the GPU kernel path — the NVIDIA/Neuron provider ends,
+> callback timing, and how this composes with the CUDA/ROCm side — lives in
+> [gpu-memory-kernel-path.md](gpu-memory-kernel-path.md). This section is the EFA-side
+> overview only.
+
 **Provider model** — each provider implements a small ops vtable
-([`struct efa_p2p_ops`](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_p2p.h)):
+([`struct efa_p2p_ops`](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_p2p.h));
+the shape of the vtable *is* the point — it defines the entire contract a peer provider
+must satisfy:
 
 ```c
 struct efa_p2p_ops {
@@ -509,7 +254,7 @@ a pointer that the other driver may already be freeing.
 
 **Relationship to DMA-BUF** — there are two independent paths to register GPU memory:
 
-1. **DMA-BUF** (`efa_reg_user_mr_dmabuf`, see below): the modern, vendor-neutral path.
+1. **DMA-BUF** (`efa_reg_user_mr_dmabuf`, above): the modern, vendor-neutral path.
    Userspace passes a `dmabuf_fd`; the driver attaches and maps it through the kernel
    `dma_buf` framework. No EFA-specific peer provider is involved. Compiled under
    `HAVE_MR_DMABUF` (with `HAVE_IB_UMEM_DMABUF_PINNED` selecting the pinned-import variant)
@@ -533,137 +278,45 @@ libfabric's EFA provider chooses DMA-BUF when viable and falls back to the peer-
 path otherwise; both ultimately produce a device-page DMA list that the same `reg_mr`
 admin command installs in hardware.
 
-### 4. mmap Support (`efa_data_verbs.c`)
+### 3. mmap Support (`efa_data_verbs.c`)
 
-Userspace needs direct access to queue buffers and doorbells. This is achieved via `mmap()`:
+Userspace needs direct access to queue buffers and doorbells. `efa_mmap()` dispatches on
+a key packed into `vma->vm_pgoff` and maps the requested region with the right caching:
 
-```c
-// From efa_data_verbs.c
-int efa_mmap(struct ib_ucontext *ibucontext, struct vm_area_struct *vma)
-{
-    struct efa_ucontext *ucontext = to_eucontext(ibucontext);
-    struct efa_dev *dev = to_edev(ibucontext->device);
-    u64 key = vma->vm_pgoff << PAGE_SHIFT;
-    size_t length = vma->vm_end - vma->vm_start;
+- **`EFA_MMAP_DB_BAR_MEMORY_FLAG`** — doorbell BAR, **write-combining**
+  (`pgprot_writecombine`).
+- **`EFA_MMAP_REG_BAR_MEMORY_FLAG`** — register BAR, **non-cached** (`pgprot_noncached`).
+- **`EFA_MMAP_IO_WC`** — queue buffers, **write-combining**.
+- **`EFA_MMAP_IO_NC`** — control buffers, **non-cached**.
 
-    switch (key & EFA_MMAP_PAGE_MASK) {
-    case EFA_MMAP_DB_BAR_MEMORY_FLAG:
-        // Map doorbell BAR (write-combining for performance)
-        return efa_mmap_io(dev, vma, dev->mem_bar, length,
-                          pgprot_writecombine(vma->vm_page_prot));
+The caching mode is the point: doorbells and queue buffers are write-combining so batched
+MMIO stores coalesce, while register/control mappings are non-cached for ordering. The
+mapping itself is a `remap_pfn_range()` of device physical memory into the process.
 
-    case EFA_MMAP_REG_BAR_MEMORY_FLAG:
-        // Map register BAR (non-cached)
-        return efa_mmap_io(dev, vma, dev->reg_bar, length,
-                          pgprot_noncached(vma->vm_page_prot));
+> Source: `efa_data_verbs.c` — `efa_mmap()`, `efa_mmap_io()`. Use
+> `codegraph explore efa_mmap` for the current body.
 
-    case EFA_MMAP_IO_WC:
-        // Queue buffers (write-combining)
-        return efa_mmap_io(dev, vma, key & ~EFA_MMAP_PAGE_MASK, length,
-                          pgprot_writecombine(vma->vm_page_prot));
+**Result**: userspace can directly write send/receive queues (no syscalls), ring
+doorbell registers, and poll completion queues.
 
-    case EFA_MMAP_IO_NC:
-        // Control buffers (non-cached)
-        return efa_mmap_io(dev, vma, key & ~EFA_MMAP_PAGE_MASK, length,
-                          pgprot_noncached(vma->vm_page_prot));
+### 4. Interrupt Handling
 
-    default:
-        return -EINVAL;
-    }
-}
+EFA uses **MSI-X** for admin/async events and for optional CQ completion notification.
+The comp-event handler resolves the CQ by index (`xa_load(&dev->cqs_xa, cqn)`) and calls
+its `comp_handler`, which wakes any thread blocked in `ibv_get_cq_event()`. See Interrupts
+vs Polling below for when this fires at all.
 
-static int efa_mmap_io(struct efa_dev *dev, struct vm_area_struct *vma,
-                       u64 phys_addr, size_t length, pgprot_t prot)
-{
-    // Map physical memory into userspace
-    return remap_pfn_range(vma,
-                          vma->vm_start,
-                          phys_addr >> PAGE_SHIFT,
-                          length,
-                          prot);
-}
-```
+> Source: `efa_main.c` / `efa_com.c` — `efa_intr_msix_comp()`,
+> `efa_process_comp_eqe()`, `efa_com_eq_comp_intr_handler()`. Use
+> `codegraph explore efa_process_comp_eqe` for the current body.
 
-**Result**: Userspace can directly write to:
-- Send/receive queues (no syscalls!)
-- Doorbell registers (notify hardware of new work)
-- Completion queues (poll for completions)
+### 5. Admin Queue Communication (`efa_com.c`, `efa_com_cmd.c`)
 
-### 5. Interrupt Handling
+The admin queue is the control path (create QP, register MR, etc.).
 
-```c
-// MSI-X interrupt handler
-static irqreturn_t efa_intr_msix_comp(int irq, void *data)
-{
-    struct efa_eq *eq = data;
-
-    // Process event queue entries
-    efa_com_eq_comp_intr_handler(eq);
-
-    return IRQ_HANDLED;
-}
-
-// Process completion events
-static void efa_process_comp_eqe(struct efa_dev *dev,
-                                 struct efa_admin_eqe *eqe)
-{
-    u16 cqn = eqe->u.comp_event.cqn;
-    struct efa_cq *cq;
-
-    // Find CQ by index
-    cq = xa_load(&dev->cqs_xa, cqn);
-
-    // Call completion handler (wakes up polling thread)
-    cq->ibcq.comp_handler(&cq->ibcq, cq->ibcq.cq_context);
-}
-```
-
-### 6. Admin Queue Communication (`efa_com.c`, `efa_com_cmd.c`)
-
-The admin queue is used for control path operations (create QP, register MR, etc.):
-
-```c
-// Admin queue descriptor
-struct efa_admin_aq_entry {
-    u8 opcode;          // Command opcode
-    u8 flags;
-    u16 command_id;
-    u32 aq_common_descriptor;
-
-    union {
-        struct efa_admin_create_qp_cmd create_qp;
-        struct efa_admin_reg_mr_cmd reg_mr;
-        struct efa_admin_create_cq_cmd create_cq;
-        // ... other commands
-    } u;
-};
-
-// Send command to admin queue
-static int efa_com_admin_q_comp_intr_handler(struct efa_com_admin_queue *aq)
-{
-    u16 comp_num = 0;
-    u16 consumer = aq->cc;
-
-    // Process completed admin commands
-    while (comp_num < aq->depth) {
-        struct efa_admin_acq_entry *cqe = &aq->cq.entries[consumer];
-
-        if (!efa_com_cq_empty(cqe))
-            break;
-
-        // Wake up waiting thread
-        complete(&comp_ctx->wait_event);
-
-        consumer = (consumer + 1) % aq->depth;
-        comp_num++;
-    }
-
-    aq->cc = consumer;
-    aq->cq.cc = consumer;
-
-    return comp_num;
-}
-```
+> Source: `efa_com.c` / `efa_com_cmd.c` — `efa_com_admin_init()`,
+> `__efa_com_submit_admin_cmd()`, `efa_com_handle_admin_completion()`,
+> `efa_com_calc_crc16_checksum()`, `efa_com_cqe_checksum_valid()`.
 
 #### Admin Queue Protocol Internals
 
@@ -719,86 +372,44 @@ ownership-bit scheme is the same mechanism the **GDAKI** GPU data path uses (see
 `ofi-plugin-protocols.md` → GIN Modes), where the GPU kernel polls SQ/CQ phase bits
 directly.
 
-```c
-// Send command to admin queue (legacy excerpt)
-static int efa_com_admin_q_comp_intr_handler(struct efa_com_admin_queue *aq)
-```
-
 ## Key Data Structures
 
-```c
-// Main device structure
-struct efa_dev {  // ([kernel/linux/efa/src/efa.h:53-79](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa.h))
-    struct ib_device ibdev;               // RDMA core device
-    struct pci_dev *pdev;                 // PCI device
-    struct efa_com_dev edev;              // Admin queue/command interface
+The core structures — `struct efa_dev` (device: `ibdev`, `pdev`, `edev`, `reg_bar`
+BAR0, `mem_bar` BAR2, `dev_attr`, `stats`, `cqs_xa`/`cqs_arr`, `db_bar_addr/len`),
+`struct efa_qp` (adds `qp_handle`, `qp_num`, `sq_db_offset`, `rq_db_offset`),
+`struct efa_cq` (`cq_idx`, `cq_handle`), and `struct efa_mr` (`umem`, `pbl`, plus
+`dmabuf`/`dmabuf_attach`/`dmabuf_sgt` under **`HAVE_MR_DMABUF`**) — are defined in
+[efa.h](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa.h).
 
-    void __iomem *reg_bar;                // BAR 0 (registers)
-    void __iomem *mem_bar;                // BAR 2 (doorbells)
+> Source: `efa.h` — `struct efa_dev`, `struct efa_qp`, `struct efa_cq`,
+> `struct efa_mr`. Use `codegraph explore efa_dev` for current field layouts.
 
-    struct efa_dev_attr dev_attr;         // Device capabilities
-    struct efa_stats stats;               // Statistics
-
-#ifdef HAVE_XARRAY
-    struct xarray cqs_xa;                 // CQ index → CQ mapping
-#else
-    struct efa_cq **cqs_arr;
-#endif
-
-    u64 db_bar_addr;                      // Doorbell BAR physical address
-    u64 db_bar_len;
-};
-
-// Queue Pair
-struct efa_qp {  // ([kernel/linux/efa/src/efa.h:240-263](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa.h))
-    struct ib_qp ibqp;
-    u32 qp_handle;
-    u32 qp_num;
-    u32 sq_db_offset;                     // Send queue doorbell offset
-    u32 rq_db_offset;                     // Recv queue doorbell offset
-    // ...
-};
-
-// Completion Queue
-struct efa_cq {  // ([kernel/linux/efa/src/efa.h:171-188](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa.h))
-    struct ib_cq ibcq;
-    u16 cq_idx;
-    u32 cq_handle;
-    // ...
-};
-
-// Memory Region
-struct efa_mr {  // ([kernel/linux/efa/src/efa.h:149-157](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa.h))
-    struct ib_mr ibmr;
-    struct ib_umem *umem;                 // Pinned user pages
-    struct efa_mr_pbl pbl;                // Page buffer list
-
-#ifdef HAVE_MR_DMABUF
-    struct dma_buf *dmabuf;               // DMA-BUF object (if GPU memory)
-    struct dma_buf_attachment *dmabuf_attach;
-    struct sg_table *dmabuf_sgt;
-#endif
-};
-```
+Compile-guard note: the DMA-BUF fields and code paths are guarded by **`HAVE_MR_DMABUF`**
+(and **`HAVE_IB_UMEM_DMABUF_PINNED`** for the pinned-import variant). There is no
+`HAVE_IB_REG_USER_MR_DMABUF` macro — if you see that name it is wrong.
 
 ## Device Capabilities
 
-From `efa_com_get_device_attr()`:
+`efa_com_get_device_attr()` fills a device-attributes struct with the hardware limits and
+capability bitmask. Representative fields and typical values:
 
-```c
-struct efa_dev_attr {
-    u32 max_qp;                           // Max queue pairs (~1024)
-    u32 max_cq;                           // Max completion queues (~1024)
-    u32 max_mr;                           // Max memory regions (~4096)
-    u32 max_mr_pages;                     // Max pages per MR (~512K)
-    u32 max_qp_wr;                        // Max WRs per QP (~8192)
-    u32 max_cq_depth;                     // Max CQ depth (~16384)
-    u32 max_wr_send_sges;                 // Max SG entries per send (~2)
-    u32 max_wr_recv_sges;                 // Max SG entries per recv (~2)
-    u64 max_rdma_size;                    // Max RDMA transfer (~1GB)
-    u16 device_caps;                      // Device capabilities bitmask
-};
-```
+| Field | Meaning | Typical |
+|-------|---------|---------|
+| `max_qp` | Max queue pairs | ~1024 (up to ~8K on p5) |
+| `max_cq` | Max completion queues | ~1024 |
+| `max_mr` | Max memory regions | ~4096 |
+| `max_mr_pages` | Max pages per MR | ~512K |
+| `max_qp_wr` | Max WRs per QP | ~8192 |
+| `max_cq_depth` | Max CQ depth | ~16384 |
+| `max_wr_send_sges` | SG entries per send | ~2 |
+| `max_wr_recv_sges` | SG entries per recv | ~2 |
+| `max_inline_data` | Max inline send | 32 B (64-B WQE) / 80 B (128-B WQE) |
+| `max_rdma_size` | Max RDMA transfer | ~1 GB |
+| `max_link_speed_gbps` | Device max link speed | up to 800 / 1600 |
+| `device_caps` | Capability bitmask | see r3.3.0 section |
+
+> Source: `efa_com_cmd.c` / `efa_com_cmd.h` — `efa_com_get_device_attr()` and the
+> device-attr result struct. Use `codegraph explore efa_com_get_device_attr`.
 
 ## Sysfs Interface
 
@@ -814,7 +425,33 @@ struct efa_dev_attr {
     ├── state                           # Port state (ACTIVE)
     ├── phys_state                      # Physical state
     ├── rate                            # Link rate
+    ├── counters/                       # port_xmit_packets, port_rcv_packets,
+    │                                   #   port_xmit_data, port_rcv_data, ...
     └── gid_attrs/                      # GID attributes
+```
+
+Module parameters are exposed under `/sys/module/efa/parameters/`:
+
+```bash
+# View EFA driver parameters
+cat /sys/module/efa/parameters/*
+```
+
+## Interrupts vs Polling
+
+EFA supports two ways to learn about completions:
+
+**MSI-X interrupts** — the driver's completion-event handler wakes threads blocked in
+`ibv_get_cq_event()`, and also delivers QP-error and async (link/health) events via the
+AENQ. Used for blocking operations and error notification; **rare in NCCL**.
+
+**Polling mode** — libfabric/NCCL typically poll the CQ continuously in userspace:
+- No interrupts on the data path.
+- Lower latency (~10 μs vs ~50 μs) at the cost of higher CPU usage.
+
+```bash
+# Check interrupt counts — a low, flat count indicates polling mode
+cat /proc/interrupts | grep efa
 ```
 
 ## Debugging
@@ -822,11 +459,14 @@ struct efa_dev_attr {
 ### Enable Driver Debug
 
 ```bash
-# Enable EFA driver debug messages
+# Enable EFA driver debug messages (dynamic debug)
 echo 'module efa +p' > /sys/kernel/debug/dynamic_debug/control
 
 # Or via modprobe
 modprobe efa debug_mask=0xffffffff
+
+# Raise console log level if needed
+echo 8 > /proc/sys/kernel/printk
 
 # Check dmesg for driver messages
 dmesg | grep efa
@@ -866,8 +506,16 @@ cat /sys/kernel/debug/tracing/trace_pipe
 # Show EFA interrupts
 cat /proc/interrupts | grep efa
 
-# Interrupt counts should increase during traffic
+# Interrupt counts should increase during traffic (interrupt mode)
 watch -n 1 'cat /proc/interrupts | grep efa'
+```
+
+### Device counters
+
+```bash
+# Per-port hardware counters
+cat /sys/class/infiniband/efa_0/ports/1/counters/*
+# e.g. port_xmit_packets, port_rcv_packets, port_xmit_data, port_rcv_data
 ```
 
 ## Performance Characteristics
@@ -882,6 +530,12 @@ watch -n 1 'cat /proc/interrupts | grep efa'
 | mmap() | 5-20 μs | One-time setup per region |
 
 **Key Insight**: After initial setup (which is slow), data path operations are **entirely in userspace** (no syscalls).
+
+**Bottlenecks**:
+- **PCIe bandwidth** — ~25 GB/s ceiling (Gen4 x16).
+- **Queue depth** — limits outstanding operations.
+- **Doorbell rate** — MMIO overhead grows with rings/sec (batch WQEs before ringing).
+- **Memory registration** — expensive without a registration cache.
 
 ## Key Source Files
 
@@ -916,7 +570,7 @@ efa_sysfs.c (1KB)         - Sysfs attributes
 2. Userspace accesses queues via **mmap()** for zero-copy, zero-syscall I/O
 3. Control path uses **admin queue** (slow, 10-50 μs per command)
 4. Data path is **entirely userspace** (fast, no kernel involvement)
-5. Supports **DMA-BUF** for GPU memory (kernel 5.12+, EFA Gen 4+)
+5. Supports **DMA-BUF** for GPU memory (kernel 5.12+); no longer gated by EFA generation
 6. Memory registration is **expensive** (100-500 μs) - userspace must cache!
 7. After setup, posting sends/recvs is just **memory writes** + **doorbell ring**
 8. **r3.3.0** adds hardware **completion counters** (for GDAKI/GPU-initiated paths),
@@ -927,5 +581,6 @@ efa_sysfs.c (1KB)         - Sysfs attributes
 **Related Documentation**:
 - [rdma-core-and-verbs.md](rdma-core-and-verbs.md) - Userspace library that talks to this driver
 - [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) - DMA-BUF implementation details
-- [efa-driver.md](efa-driver.md) - Higher-level EFA driver overview
+- [gpu-memory-kernel-path.md](gpu-memory-kernel-path.md) - Deep GPU kernel path (P2P provider ends, ticket revocation)
+- [efa-hardware-architecture.md](efa-hardware-architecture.md) - Hardware queue/WQE/CQE model
 - [rdma-memreg.md](rdma-memreg.md) - Memory registration from all layers
