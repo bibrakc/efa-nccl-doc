@@ -463,12 +463,17 @@ N*α - 2*log₂(N)*α < β*S
 S > α*(N - 2*log₂(N))/β
 ```
 
-For N=8, α=10μs, β=1/(50GB/s):
+For N=8, α=10μs, β = 1/(50 GB/s) = **0.02 ns/byte** (400 Gbps ÷ 8 bits/byte = 50 GB/s):
 ```
-S > 10μs * (8 - 2*3) / (20ns/byte)
-  > 10μs * 2 / 20ns
-  > 1 MB
+S > 10 μs * (8 - 2*3) / 0.02 ns/byte
+  > 20 μs / 0.02 ns/byte
+  > 20e-6 s / 0.02e-9 s/byte
+  > 1,000,000 bytes = 1 MB
 ```
+
+Note β is **0.02** ns/byte, not 20. A link that took 20 ns to move one byte would run at
+50 MB/s. The same β appears in [pat-algorithm.md](pat-algorithm.md) and
+[tree-algorithm.md](tree-algorithm.md).
 
 **Conclusion**: Ring is better for messages > 1 MB.
 

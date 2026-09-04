@@ -929,8 +929,9 @@ FI_MR_CACHE_MAX_SIZE=unlimited
 # EFA settings
 FI_EFA_ENABLE_SHM_TRANSFER=0
 FI_EFA_USE_DEVICE_RDMA=1
-FI_EFA_TX_SIZE=256
-FI_EFA_RX_SIZE=256
+# FI_EFA_TX_SIZE / FI_EFA_RX_SIZE deliberately NOT set here. Their default is 0,
+# which means "let the provider size the queues" (prov/efa/src/efa_env.c:25-26).
+# Setting 256 is a downgrade on current hardware, not a baseline.
 
 # NCCL settings
 NCCL_DEBUG=WARN
@@ -954,7 +955,8 @@ NCCL_ALGO=Ring,Tree
 # Protocol override (if needed)
 NCCL_PROTO=LL128,Simple
 
-# Larger queues for high bandwidth
+# Larger queues for high bandwidth. Non-default override; the default is 0,
+# meaning the provider chooses. Measure before pinning these.
 FI_EFA_TX_SIZE=512
 FI_EFA_RX_SIZE=512
 ```

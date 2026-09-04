@@ -153,13 +153,28 @@ Example `lspci` view of an EFA function:
 ([efa_main.c](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_main.c) lines ~27-38)
 enumerates VF device IDs:
 
-| Device ID | Generation | Note |
-|-----------|------------|------|
-| `0xefa0` (`PCI_DEV_ID_EFA0_VF`) | Gen 1 | |
-| `0xefa1` (`PCI_DEV_ID_EFA1_VF`) | Gen 2 | p4d/p4de |
-| `0xefa2` (`PCI_DEV_ID_EFA2_VF`) | Gen 3 | |
-| `0xefa3` (`PCI_DEV_ID_EFA3_VF`) | Gen 4 | |
-| `0xefa4` (`PCI_DEV_ID_EFA4_VF`) | — | **new in r3.3.0** |
+| Device ID | Driver name | "Gen N" | Product name | Instances |
+|-----------|-------------|---------|--------------|-----------|
+| `0xefa0` | `PCI_DEV_ID_EFA0_VF` | Gen 1 | original EFA | p3dn |
+| `0xefa1` | `PCI_DEV_ID_EFA1_VF` | Gen 2 | EFAv1 | p4d/p4de |
+| `0xefa2` | `PCI_DEV_ID_EFA2_VF` | Gen 3 | EFAv2 | p5/p5e |
+| `0xefa3` | `PCI_DEV_ID_EFA3_VF` | Gen 4 | EFAv3 | p5en/p6 |
+| `0xefa4` | `PCI_DEV_ID_EFA4_VF` | — | — | **new in r3.3.0** |
+
+**This table is the corpus's single authority on the correspondence, because three numbering
+schemes are in play and mixing them produces apparent contradictions:**
+
+- the **device ID** `0xefaN`, which is what the driver matches on;
+- the **"Gen N"** ordinal used in some AWS documentation, where `Gen N = N + 1` relative to the
+  device-ID suffix — so `0xefa2` is "Gen 3";
+- the **EFAvN** product name, where `EFAvN = Gen (N + 1)` — so `0xefa2` is **EFAv2 and Gen 3
+  simultaneously**. Both labels are correct; they are different schemes, not a discrepancy.
+
+Only the `0xefa1` → p4d/p4de row is annotated in the driver source. The remaining instance
+mappings are consistent with [efa-provider.md](efa-provider.md) and
+[overview.md](overview.md) but are not stated in `efa_main.c`, so treat the instance column as
+corroborated-by-agreement rather than source-verified. Prefer the **EFAvN** name in prose; use
+the device ID when reasoning about driver behaviour.
 
 > Source: `efa_main.c` — `efa_pci_tbl[]`, `efa_pci_driver`, `efa_device_init()`
 > (probe) / `efa_device_remove()`. Use `codegraph explore efa_device_init` for the

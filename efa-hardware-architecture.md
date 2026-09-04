@@ -510,7 +510,7 @@ struct efa_io_remote_mem_addr {
 - RDMA Write: Write data to remote memory
 - RDMA Write with Immediate: Write + send immediate data to CQ
 - Requires valid rkey at destination
-- EFA Gen 3+ supports native RDMA (p5 instances), Gen 2 emulates via send/recv (p4d)
+- EFAv2 and later support native RDMA (p5 onward); EFAv1 emulates it via send/recv (p4d)
 
 ## SRD Transport Integration
 
@@ -583,32 +583,46 @@ From libfabric EFA provider defaults and kernel driver capabilities:
 - Max inline data: 32 bytes (64-byte WQE) or **80 bytes (128-byte WQE)** on devices
   advertising the wide-WQE capability (r3.3.0)
 
-**Memory Consumption** (estimated):
-- SQ: 64 bytes/entry × depth
-- RQ: 32 bytes/entry × depth
-- CQ: **16 bytes/entry**, both TX and RX (see the completion-descriptor sizes below)
+**Memory Consumption**, from the descriptor sizes below:
+- SQ: **64 bytes/entry** × depth (`efa_io_tx_wqe`; 128 with the wide-WQE capability)
+- RQ: **16 bytes/entry** × depth (`efa_io_rx_desc`)
+- CQ: **16 bytes/entry** × depth, both TX and RX
 
 Example for 512-entry QP + 1024-entry CQ:
 - SQ: 512 × 64 = 32 KB
-- RQ: 512 × 32 = 16 KB
+- RQ: 512 × 16 = 8 KB
 - CQ: 1024 × 16 = 16 KB
-- **Total: ~64 KB per QP**
+- **Total: ~56 KB per QP**
 
-For 1000 QPs: ~64 MB of queue memory
+For 1000 QPs: ~56 MB of queue memory
 
-**Completion-descriptor sizes**, summed from the struct definitions in
+**Descriptor sizes**, summed from the struct definitions in
 [amzn-drivers kernel/linux/efa/src/efa_io_defs.h](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h):
 
 | Descriptor | Fields | Size |
 | --- | --- | --- |
+| `efa_io_rx_desc` | `u32 buf_addr_lo` + `u32 buf_addr_hi` + `u16 req_id` + `u16 length` + `u32 lkey_ctrl` | **16 B** (RQ entry) |
+| `efa_io_tx_meta_desc` | `req_id`, `ctrl1..3`, `dest_qp_num`, `length`, `immediate_data`, `ah`, `qkey`, `reserved2[6]` | **28 B** |
+| `efa_io_tx_wqe` | meta (28) + union { `sgl[2]` / `inline_data[32]` / `rdma_req` / `fast_mr_reg_req` / `fast_mr_inv_req` }, `u64`-aligned | **64 B** (SQ entry) |
 | `efa_io_cdesc_common` | `u16 req_id` + `u8 status` + `u8 flags` + `u16 qp_num` | **6 B** |
-| `efa_io_tx_cdesc` | common (6) + `efa_io_req_id_ex` (`u16 w[3]` = 6) + `u8 reserved[4]` | **16 B** |
-| `efa_io_rx_cdesc` | common (6) + `u16 length` + `u16 ah` + `u16 src_qp_num` + `u32 imm` | **16 B** |
+| `efa_io_tx_cdesc` | common (6) + `efa_io_req_id_ex` (`u16 w[3]` = 6) + `u8 reserved[4]` | **16 B** (TX CQE) |
+| `efa_io_rx_cdesc` | common (6) + `u16 length` + `u16 ah` + `u16 src_qp_num` + `u32 imm` | **16 B** (RX CQE) |
 | `efa_io_rx_cdesc_ex` | `efa_io_rx_cdesc` (16) + union { `rdma_write` \| `u8 src_addr[16]` } | **32 B** |
 
-Note that `efa_io_tx_cdesc` is **16 bytes, not 8**. Older descriptions of this structure omit
-the `req_id_ex` field and the 4-byte reserved tail; both are present in the current header. The
-extended RX descriptor is used only when the source AH is unknown (`0xFFFF`) and the CQ has
+Three of these are commonly misquoted:
+
+- **The RQ entry is 16 bytes, not 32.** rdma-core sets it straight from the struct:
+  `rq_attr->entry_size = sizeof(struct efa_io_rx_desc)`
+  ([rdma-core providers/efa/verbs.c, line 2438](https://github.com/linux-rdma/rdma-core/blob/master/providers/efa/verbs.c)).
+- **The SQ entry is 64 bytes** because the `u64` members of `fast_mr_reg_req` force 8-byte
+  alignment on the union, padding 28 + 32 up to 64. rdma-core names the constant after the
+  result: `#define EFA_IO_TX_DESC_SIZE_64 (sizeof(struct efa_io_tx_wqe))`
+  ([verbs.c, line 30](https://github.com/linux-rdma/rdma-core/blob/master/providers/efa/verbs.c)),
+  with `EFA_IO_TX_DESC_SIZE_128` for the wide-WQE variant.
+- `efa_io_tx_cdesc` is **16 bytes, not 8**. Older descriptions of this structure omit the
+  `req_id_ex` field and the 4-byte reserved tail; both are present in the current header.
+
+The extended RX descriptor is used only when the source AH is unknown (`0xFFFF`) and the CQ has
 `set_src_addr` enabled, so 16 B is the size to budget with for ordinary traffic.
 
 ## Programming Model
@@ -674,18 +688,23 @@ if (++cq->consumer_idx == cq->depth) { cq->consumer_idx = 0; cq->phase ^= 1; }
 
 ### Protocol Support by Generation
 
-The kernel driver (**EFA r3.3.0**) enumerates PCI VF device IDs
-`0xefa0`, `0xefa1`, `0xefa2`, `0xefa3`, and **`0xefa4`** (new in r3.3.0)
-([efa_main.c](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_main.c) lines ~27-38).
+> **Two numbering schemes, and they are not interchangeable.** The kernel driver names its
+> PCI VF device IDs `EFA0`..`EFA4` after the hex suffix — `0xefa0`, `0xefa1`, `0xefa2`,
+> `0xefa3`, and **`0xefa4`** (new in r3.3.0)
+> ([efa_main.c, lines 27-31](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_main.c)).
+> The product-facing names are **EFAv1 / EFAv2 / EFAv3**. The numeral in a device ID is *not*
+> the EFAv number, and there is no "Gen N" anywhere in the driver. This document uses the
+> EFAvN names throughout, matching [efa-provider.md](efa-provider.md) and
+> [overview.md](overview.md); do not translate between the two schemes by arithmetic.
 
-**EFA Gen 2** (p4d, p4de instances):
+**EFAv1** (p4d, p4de instances):
 - SRD transport only
 - Send/Recv operations native
 - RDMA Write emulated via Send/Recv
 - RDMA Read not supported
 - MTU: 8192 bytes
 
-**EFA Gen 3+** (p5, p5e, p5en instances):
+**EFAv2 and later** (p5, p5e = EFAv2; p5en, p6 = EFAv3):
 - SRD transport
 - Send/Recv operations
 - **Native RDMA Write** (no emulation)
@@ -706,9 +725,16 @@ The kernel driver (**EFA r3.3.0**) enumerates PCI VF device IDs
 ### DMA-BUF GPU Memory Support
 
 **Requirements**:
-- EFA Gen 4+ (device ID 0xefa3 or higher; the r3.3.0 driver adds 0xefa4)
 - Linux kernel 5.12+
-- Libfabric 1.20+
+- Libfabric 1.20+ (the plugin requests API 1.20 only when DMA-BUF is viable, so that
+  providers may use `FI_MR_DMABUF`)
+- A GPU driver that can export the allocation as a DMA-BUF fd
+
+**Not** gated by EFA hardware generation. The device-ID check that disabled DMA-BUF on EFA
+Gen 1-3 (`0xefa0` / `0xefa1` / `0xefa2`) was removed in aws-ofi-nccl commit `0f285d5`
+(*"dma-buf: Don't disable dma-buf on EFAv1-3"*); the underlying firmware page-merging issue
+was fixed. Any statement that DMA-BUF requires Gen 4 or `0xefa3` and above is stale — see
+[dmabuf-gpu-memory.md](dmabuf-gpu-memory.md), which owns this fact.
 
 **Mechanism**:
 - GPU memory exported as DMA-BUF file descriptor
@@ -772,7 +798,7 @@ and exposes the raw speed in Gbps via a new query-port verb. Earlier
 |--------|---------|
 | **Queue Types** | Send Queue (SQ), Receive Queue (RQ), Completion Queue (CQ) |
 | **Transport** | SRD (Scalable Reliable Datagram) - reliable out-of-order delivery |
-| **WQE Size** | 64 bytes (TX), or **128 bytes** with wide-WQE cap (r3.3.0); 32 bytes (RX) |
+| **WQE Size** | 64 bytes (TX), or **128 bytes** with wide-WQE cap (r3.3.0); 16 bytes (RX) |
 | **CQE Size** | 16 bytes (TX and RX); 32 bytes for the extended RX descriptor |
 | **Max Queue Depth** | 16384 (SQ/RQ), 262144 (CQ) |
 | **Typical Depth** | 512 (SQ/RQ), 1024 (CQ) |
@@ -791,8 +817,9 @@ and exposes the raw speed in Gbps via a new query-port verb. Earlier
 3. **SRD transport** enables scalable many-to-many communication without RC's QP explosion
 4. **Hardware descriptors** are compact (64B TX WQE, 16B RX CQE) for cache efficiency
 5. **Fast MR registration** via work requests allows dynamic buffer management
-6. **DMA-BUF support** on Gen 4+ enables direct GPU memory access
-7. **Native RDMA** on Gen 3+ (p5 instances) vs emulation on Gen 2 (p4d)
+6. **DMA-BUF support** enables direct GPU memory access, and is *not* gated by EFA
+   generation (the Gen 1-3 check was removed in aws-ofi-nccl `0f285d5`)
+7. **Native RDMA** on EFAv2+ (p5 onward) vs emulation on EFAv1 (p4d)
 
 **Related Documentation**:
 - [srd-protocol.md](srd-protocol.md) - SRD transport protocol details

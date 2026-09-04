@@ -34,13 +34,13 @@ used `#L` anchors in roughly a sixth of them. All of that was normalized in the
 
 | Check | Result |
 | --- | --- |
-| Source links whose target file exists upstream | **522 / 522** |
+| Source links whose target file exists upstream | **524 / 524** |
 | Commit-pinned `blob/<sha>` links remaining | **0** |
 | `#L` line anchors remaining | **0** |
-| Internal `.md` cross-references that resolve | **306 / 306** |
+| Internal `.md` cross-references that resolve | **314 / 314** |
 | Intra-doc heading anchors that resolve | **49 / 49** |
 
-Of the 524 source file links in the corpus, 522 point into the six repos cloned locally and
+Of the 526 source file links in the corpus, 524 point into the six repos cloned locally and
 are machine-checked above. The remaining two point at repos not cloned here (`gdrcopy`,
 `nccl-tests`) and are not automatically verified.
 
@@ -73,7 +73,7 @@ Counts are source links into upstream repos (not internal cross-references).
 | --- | --- | --- |
 | [libfabric-overview.md](libfabric-overview.md) | 72 | libfabric 72 |
 | [ofi-plugin.md](ofi-plugin.md) | 64 | aws-ofi-nccl 33, libfabric 31 |
-| [efa-hardware-architecture.md](efa-hardware-architecture.md) | 41 | amzn-drivers 41 |
+| [efa-hardware-architecture.md](efa-hardware-architecture.md) | 43 | amzn-drivers 41, rdma-core 2 |
 | [nccl-datapath.md](nccl-datapath.md) | 40 | libfabric 15, nccl 10, rdma-core 8, aws-ofi-nccl 7 |
 | [nccl-channels.md](nccl-channels.md) | 33 | nccl 28, aws-ofi-nccl 5 |
 | [freelist-allocator.md](freelist-allocator.md) | 25 | aws-ofi-nccl 24, libfabric 1 |

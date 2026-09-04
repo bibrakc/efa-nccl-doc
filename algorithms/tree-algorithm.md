@@ -463,13 +463,17 @@ Rearranging:
 S < 2*α*(N - log₂(N)) / [β*(2 - log₂(N))]
 ```
 
-**For N=8**, α=10μs, β=20ns/byte:
+**For N=8**, α=10μs, β = 1/(50 GB/s) = **0.02 ns/byte** (not 20 — see
+[ring-algorithm.md](ring-algorithm.md)):
 ```
-S < 2*10μs*(8 - 3) / [20ns*(2 - 3)]
-  < 2*10μs*5 / (-20ns)
-  (inequality reverses due to negative denominator)
+S < 2*10 μs*(8 - 3) / [0.02 ns/byte * (2 - 3)]
+  < 100 μs / (-0.02 ns/byte)
 
-Correctly: Tree is better for small S, Ring for large S
+The denominator is negative, so this closed form yields no positive crossover:
+the algebra has been pushed past where the approximation holds.
+
+What is true: Tree wins for small S, Ring for large S. Take the boundary from
+measurement or the tuner, not from this expression.
 ```
 
 **Empirical Crossover** (from NCCL tuning):
