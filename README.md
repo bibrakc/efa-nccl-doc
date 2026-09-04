@@ -347,11 +347,10 @@ scattered across documents.
 - **Source links normalized.** All links are now branch-form (`blob/master`, `blob/main`)
   with **no commit-pinned SHAs and no `#L` anchors** — line numbers live in the link text,
   which does not rot silently. 46 pinned base URLs were converted, 66 anchors stripped, and
-  **16 genuinely broken source paths** fixed (upstream file moves). Invariants are now
-  machine-checked; the authoritative counts live in
+  the source paths that upstream had moved were repointed; [SOURCES.md](SOURCES.md) tabulates
+  the notable ones. Invariants are now machine-checked and the authoritative counts live in
   [SOURCES.md](SOURCES.md) (every source link resolves to a file that
-  exists upstream, and every internal cross-reference, heading anchor and symbol mapping
-  resolves).
+  exists upstream, and every internal cross-reference and heading anchor resolves).
 - **Index fixes**: [kernel-efa-driver.md](kernel-efa-driver.md) was missing from the documentation index;
   the metadata files are now listed too.
 - **Fabricated identifiers purged (independent audit round).** An exhaustive sweep of every

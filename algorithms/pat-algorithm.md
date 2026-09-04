@@ -303,9 +303,26 @@ BW_eff ≈ S×(N-1)/N / [β×S×(N-1)/N]
 
 ## Protocol-Specific Latency
 
-NCCL supports three protocols, each with different performance characteristics:
+**PAT runs with the Simple protocol only.** The algorithm registry contains exactly one PAT
+entry and no LL or LL128 variant:
 
-### 1. Simple Protocol (Full Bandwidth)
+```c
+// nccl/src/config/algorithm_registry.cc, line 52
+{"PAT_SIMPLE", ALGBIT(20), F_AG | F_RS, NCCL_ALGO_PAT, NCCL_PROTO_SIMPLE, -1},
+```
+
+Contrast Ring, which has `RING_LL`, `RING_LL128` and `RING_SIMPLE` (lines 35-37). Two
+consequences follow, and both are easy to get wrong:
+
+- `NCCL_PROTO=LL` or `LL128` **cannot** be combined with PAT. Requesting PAT with a
+  non-Simple protocol does not yield a faster PAT; it takes PAT out of the running.
+- `F_AG | F_RS` means PAT applies to **AllGather and ReduceScatter only** — not AllReduce.
+
+The LL and LL128 figures below are therefore kept only as a **contrast against Ring at the
+same message size**, showing why PAT's Simple-only restriction costs little for the sizes
+where PAT is chosen. They are not selectable PAT configurations.
+
+### 1. Simple Protocol (the only PAT protocol)
 
 Uses full MTU (typically 128KB or 256KB chunks):
 
@@ -315,51 +332,51 @@ T_pat_simple = log₂(N)×α_simple + β_simple×S×(N-1)/N
 
 **Parameters** (p5 instance, EFA):
 - α_simple ≈ 15-20 μs (EFA network latency)
-- β_simple = 1 / 400 Gbps ≈ 0.0025 ns/byte
+- β_simple = 1 / 400 Gbps = 1 / (50 GB/s) = **0.02 ns/byte**
 
 **Example** (N=8, S=1 MB):
 ```
-T_pat_simple = 3 × 18 μs + 0.0025 ns/byte × 1 MB × 7/8
-             = 54 μs + 2.19 μs
-             = 56.19 μs
+T_pat_simple = 3 × 18 μs + 0.02 ns/byte × 1 MiB × 7/8
+             = 54 μs + 18.35 μs
+             = 72.4 μs
 ```
 
-### 2. LL128 Protocol (128-byte chunks)
+### 2. LL128 Protocol — for comparison only (Ring/Tree can use it, PAT cannot)
 
 Uses 128-byte chunks with 8-byte metadata:
 
 ```
-T_pat_ll128 = log₂(N)×α_ll128 + β_ll128×S×(N-1)/N × (128+8)/128
+T_ll128 = log₂(N)×α_ll128 + β_ll128×S×(N-1)/N × (128+8)/128
 ```
 
 **Parameters** (p5 instance):
 - α_ll128 ≈ 8-12 μs (lower latency than Simple)
-- β_ll128 ≈ β_simple × 1.0625 (8-byte overhead)
+- β_ll128 ≈ β_simple × 1.0625 = 0.02125 ns/byte (8-byte metadata per 128-byte chunk)
 
 **Example** (N=8, S=128 KB):
 ```
-T_pat_ll128 = 3 × 10 μs + 0.00266 ns/byte × 128 KB × 7/8
-             = 30 μs + 0.296 μs
-             = 30.3 μs
+T_ll128 = 3 × 10 μs + 0.02125 ns/byte × 128 KiB × 7/8
+        = 30 μs + 2.44 μs
+        = 32.4 μs
 ```
 
-### 3. LL Protocol (8-byte chunks)
+### 3. LL Protocol — for comparison only (Ring/Tree can use it, PAT cannot)
 
 Uses 8-byte chunks, optimized for very low latency:
 
 ```
-T_pat_ll = log₂(N)×α_ll + β_ll×S×(N-1)/N
+T_ll = log₂(N)×α_ll + β_ll×S×(N-1)/N
 ```
 
 **Parameters** (p5 instance):
 - α_ll ≈ 5-8 μs (lowest latency)
-- β_ll ≈ 2-3× β_simple (low bandwidth due to overhead)
+- β_ll ≈ 3× β_simple = 0.06 ns/byte (LL carries 8 bytes of payload per 16-byte line)
 
 **Example** (N=8, S=4 KB):
 ```
-T_pat_ll = 3 × 6 μs + 0.0075 ns/byte × 4 KB × 7/8
-             = 18 μs + 0.026 μs
-             = 18.03 μs
+T_ll = 3 × 6 μs + 0.06 ns/byte × 4 KiB × 7/8
+     = 18 μs + 0.22 μs
+     = 18.2 μs
 ```
 
 ### Protocol Selection Heuristic
@@ -403,11 +420,19 @@ log₂(N)×α < 2N×α + β×S
 ```
 S_crossover ≈ (2N - log₂(N))×α / β
 
-For N=8:   S ≈ (16 - 3) × 15 μs / 0.0025 ns/byte = 78 KB
-For N=64:  S ≈ (128 - 6) × 15 μs / 0.0025 ns/byte = 732 KB
+For N=8:   S ≈ (16 - 3) × 15 μs / 0.02 ns/byte = 9.8 MB
+For N=64:  S ≈ (128 - 6) × 15 μs / 0.02 ns/byte = 92 MB
 ```
 
-**Interpretation**: PAT is faster than Ring for messages below ~100 KB to ~1 MB (depending on scale).
+**Interpretation, with a caveat.** Taken literally the closed form says PAT wins below
+roughly 10 MB at N=8 and 90 MB at N=64. Do not use those figures as operating thresholds:
+they are far larger than where the tuner actually switches. The discrepancy comes from the
+model's premise that Ring pays twice PAT's bandwidth term, which overstates Ring's cost —
+Ring AllGather is bandwidth-optimal. Treat the formula as showing the *shape* (PAT's
+`log₂(N)` latency term beats Ring's `2(N-1)` term, and that advantage shrinks as the message
+grows), and take real thresholds from the tuner: `chunkSizeTuningAllGatherPatSimpleP5en()`
+steps down from a 1 MiB ceiling (512 KiB at `nNodes >= 16`) to a 32 KiB floor. See
+[nccl-tuner.md](../nccl-tuner.md).
 
 **PAT vs. Tree**:
 ```
@@ -483,18 +508,30 @@ For N ≥ 4, (N-1)/N approaches 1, while log₂(N) grows. So **Tree is better fo
 - 4× 400 Gbps EFA adapters (total 1600 Gbps)
 - 200 Gbps EFA per GPU
 
-**PAT Performance** (single-node, inter-GPU via EFA):
+**PAT performance: not tabulated here, deliberately.**
 
-| Message Size | PAT Latency | Ring Latency | Speedup |
-|--------------|-------------|--------------|---------|
-| 4 KB         | ~18 μs      | ~90 μs       | 5.0×    |
-| 32 KB        | ~30 μs      | ~120 μs      | 4.0×    |
-| 128 KB       | ~48 μs      | ~180 μs      | 3.75×   |
-| 512 KB       | ~110 μs     | ~290 μs      | 2.64×   |
-| 1 MB         | ~180 μs     | ~450 μs      | 2.5×    |
-| 4 MB         | ~620 μs     | ~1100 μs     | 1.77×   |
+An earlier revision of this document carried a table of PAT-versus-Ring latencies for p5. Those
+figures were **model output presented as measurements**, and they did not even follow from the
+model's own β. They have been removed rather than corrected, because a plausible-looking
+latency table is precisely the kind of thing that gets quoted in a design review.
 
-**Note**: These are estimated values based on α-β model. Actual performance may vary.
+What the model does support, qualitatively:
+
+- PAT's advantage is largest for **small messages**, where the `log₂(N)` versus `2(N-1)` latency
+  term dominates, and shrinks as the message grows and the bandwidth term takes over.
+- The advantage grows with **N**, since `2(N-1)` grows linearly while `log₂(N)` does not.
+
+For numbers you can act on, measure on the target instance:
+
+```bash
+# PAT applies to AllGather and ReduceScatter only
+./build/all_gather_perf -b 8 -e 128M -f 2 -g 8      # let the tuner choose
+NCCL_ALGO=PAT ./build/all_gather_perf -b 8 -e 128M -f 2 -g 8    # force PAT
+NCCL_ALGO=Ring ./build/all_gather_perf -b 8 -e 128M -f 2 -g 8   # force Ring
+```
+
+Then compare against the tuner's own thresholds in [nccl-tuner.md](../nccl-tuner.md), which
+records what AWS actually ships per instance type.
 
 ### Multi-Node Performance (p5 cluster)
 
@@ -508,13 +545,13 @@ T_pat_multi = log₂(M)×α_network + β_network×S×(M-1)/M
 
 **Example** (M=16 nodes, 128 GPUs, S=256 KB):
 ```
-Inter-node:  4 × 15 μs + 0.00125 ns/byte × 256 KB × 15/16
-           = 60 μs + 0.30 μs = 60.3 μs
+Inter-node:  4 × 15 μs + 0.005 ns/byte × 256 KiB × 15/16   (1600 Gbps = 200 GB/s per node)
+           = 60 μs + 1.23 μs = 61.2 μs
 
-Intra-node:  3 × 1 μs + 0.00031 ns/byte × 256 KB × 7/8
-           = 3 μs + 0.069 μs = 3.07 μs
+Intra-node:  3 × 1 μs + 0.0025 ns/byte × 256 KiB × 7/8      (3.2 Tbps = 400 GB/s per GPU)
+           = 3 μs + 0.57 μs = 3.6 μs
 
-Total:       63.4 μs
+Total:       64.8 μs
 ```
 
 ---

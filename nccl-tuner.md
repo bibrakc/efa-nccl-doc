@@ -584,7 +584,8 @@ export NCCL_ALGO=TREE    # or RING, NVLS, etc.
 export NCCL_PROTO=LL     # or LL128, SIMPLE
 
 # Set number of channels (overrides tuner)
-export NCCL_NCHANNELS=16
+export NCCL_MIN_NCHANNELS=16
+export NCCL_MAX_NCHANNELS=16
 
 # Enable tuner plugin
 export NCCL_TUNER_PLUGIN=/path/to/libnccl-ofi-tuner.so
@@ -839,7 +840,7 @@ nsys profile --trace=nvtx,cuda,mpi ./nccl_app
 | **Max Regions** | 20 vertices per region, unlimited regions per collective |
 | **Max Capacity** | 1M ranks, 100 GB message size |
 | **Channel Range** | 1-32 channels (SMs) |
-| **Environment Vars** | NCCL_TUNER_PLUGIN, NCCL_ALGO, NCCL_PROTO, NCCL_NCHANNELS |
+| **Environment Vars** | NCCL_TUNER_PLUGIN, NCCL_ALGO, NCCL_PROTO, NCCL_MIN_NCHANNELS, NCCL_MAX_NCHANNELS |
 
 **Key Takeaways**:
 1. **NCCL tuner uses cost-based selection** across algorithm/protocol matrix

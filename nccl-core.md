@@ -105,7 +105,7 @@ GPU Memory
 - Based on topology (avoid conflicts)
 - Balanced across available NICs
 - Considers NVLink connectivity
-- Configurable via `NCCL_NCHANNELS`
+- Configurable via `NCCL_MIN_NCHANNELS` / `NCCL_MAX_NCHANNELS` (clamps, not a direct setter)
 
 ### Operation Lifecycle
 
@@ -238,8 +238,9 @@ typedef struct {
 ### Key Environment Variables
 
 ```bash
-# Number of channels (affects parallelism)
-NCCL_NCHANNELS=8
+# Number of channels (affects parallelism) — clamp both ends to pin it
+NCCL_MIN_NCHANNELS=8
+NCCL_MAX_NCHANNELS=8
 
 # Algorithm selection
 NCCL_ALGO=Ring,Tree
@@ -385,7 +386,7 @@ The OFI plugin integrates into this architecture through the `ncclNet_t` interfa
 ### Environment Variables
 
 **NCCL Configuration**:
-- `NCCL_NCHANNELS` - Number of channels (default: auto)
+- `NCCL_MIN_NCHANNELS` / `NCCL_MAX_NCHANNELS` - Clamp the channel count (default: unset, NCCL chooses)
 - `NCCL_ALGO` - Algorithm selection (Ring, Tree, CollNet)
 - `NCCL_PROTO` - Protocol selection (Simple, LL, LL128)
 - `NCCL_DEBUG` - Debug level (WARN, INFO, TRACE)

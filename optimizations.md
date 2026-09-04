@@ -565,8 +565,9 @@ NCCL_PROTO=Simple           # Force Simple
 ### Channel Tuning
 
 ```bash
-# Default: 4-16 channels depending on topology
-NCCL_NCHANNELS=8
+# Default: NCCL picks based on topology; clamp both ends to pin it
+NCCL_MIN_NCHANNELS=8
+NCCL_MAX_NCHANNELS=8
 
 # More channels = more parallelism
 # But diminishing returns and overhead
@@ -822,19 +823,22 @@ NCCL_BUFFSIZE=2097152   # 2 MB
 # Deep learning training (large models)
 NCCL_ALGO=Ring
 NCCL_PROTO=Simple
-NCCL_NCHANNELS=8
+NCCL_MIN_NCHANNELS=8
+NCCL_MAX_NCHANNELS=8
 NCCL_CHUNK_SIZE=262144  # 256 KB
 
 # Deep learning inference (small batches)
 NCCL_ALGO=Tree
 NCCL_PROTO=LL128
-NCCL_NCHANNELS=4
+NCCL_MIN_NCHANNELS=4
+NCCL_MAX_NCHANNELS=4
 NCCL_CHUNK_SIZE=65536   # 64 KB
 
 # Large-scale training (many nodes)
 NCCL_ALGO=Ring
 NCCL_PROTO=Simple
-NCCL_NCHANNELS=16
+NCCL_MIN_NCHANNELS=16
+NCCL_MAX_NCHANNELS=16
 NCCL_CROSS_NIC=2        # Multi-rail
 ```
 
@@ -965,7 +969,7 @@ FI_EFA_RX_SIZE=512
 1. Memory registration cache misses
    - Solution: Enable cache, use memhooks
 2. Too few channels
-   - Solution: Increase NCCL_NCHANNELS
+   - Solution: Raise `NCCL_MIN_NCHANNELS`
 3. Wrong algorithm
    - Solution: Use Ring for large messages
 4. CPU bottleneck

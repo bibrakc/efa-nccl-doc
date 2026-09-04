@@ -518,7 +518,8 @@ Bytes per isend(): 1MB
 ```bash
 # Large messages, many GPUs, bandwidth-critical
 export NCCL_BUFFSIZE=8388608   # 8MB
-export NCCL_NCHANNELS=8
+export NCCL_MIN_NCHANNELS=8      # pin the channel count by setting
+export NCCL_MAX_NCHANNELS=8      # both clamps to the same value
 export NCCL_PROTO=Simple
 ```
 
@@ -530,7 +531,8 @@ export NCCL_PROTO=Simple
 ```bash
 # Default is usually optimal
 export NCCL_BUFFSIZE=4194304   # 4MB (default)
-export NCCL_NCHANNELS=8
+export NCCL_MIN_NCHANNELS=8
+export NCCL_MAX_NCHANNELS=8
 ```
 
 **Memory cost**: 8 channels × 4MB = 32MB per GPU
@@ -541,7 +543,8 @@ export NCCL_NCHANNELS=8
 ```bash
 # Minimize memory usage
 export NCCL_BUFFSIZE=2097152   # 2MB
-export NCCL_NCHANNELS=4
+export NCCL_MIN_NCHANNELS=4
+export NCCL_MAX_NCHANNELS=4
 ```
 
 **Memory cost**: 4 channels × 2MB = 8MB per GPU

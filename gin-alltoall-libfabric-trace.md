@@ -395,8 +395,9 @@ fi_send(ep, &metadata, sizeof(metadata), desc, remote_addr, &ctx);
 
 **Network bottleneck**:
 - **Per-rank bandwidth**: 400 Gbps (p5.48xlarge: 8 GPUs × 4 EFAs = 32 total, 400 Gbps per GPU)
+  → 400 Gbps ÷ 8 bits/byte = **50 GB/s**
 - **Data per rank**: 120 peers × 4 KB = 480 KB
-- **Transfer time**: 480 KB / (400 Gbps / 8) = **~10 μs**
+- **Transfer time**: 480 KiB ÷ 50 GB/s = 491,520 B ÷ 50×10⁹ B/s = **~9.8 μs**
 
 **Latency-bound** (for small messages):
 - **RTT**: ~35 μs (estimate for p5en with EFAv3; not measured in this trace)

@@ -10,8 +10,9 @@ Three rules, applied uniformly across every document:
 1. **Branch-form base URLs, never commit-pinned SHAs.**
    `https://github.com/aws/aws-ofi-nccl/blob/master/...`, not `.../blob/d840aa1/...`.
    A commit-pinned link freezes the reader on a snapshot that gets staler every week;
-   these docs exist to point at *current* code. The snapshot the docs were written
-   exact permalink can still be reconstructed when a historical view is genuinely needed.
+   these docs exist to point at *current* code. The snapshot the docs were written against
+   is recorded under [Source Snapshot](#source-snapshot) below, so the exact permalink can
+   still be reconstructed when a historical view is genuinely needed.
 
 2. **No `#L` line anchors in URLs.** Line anchors rot silently: after any refactor the
    anchor still resolves, it just points at unrelated code, which is worse than no anchor
@@ -29,17 +30,22 @@ amzn-drivers `8a8b6f2`, rdma-core `6e9643e`, linux `e84d960`) with branch links,
 used `#L` anchors in roughly a sixth of them. All of that was normalized in the
 2026-09-01 refresh: **0 commit-pinned links and 0 `#L` anchors remain.**
 
-## Verification (2026-09-01)
+## Verification (2026-09-04)
 
 | Check | Result |
 | --- | --- |
-| Source links whose target file exists upstream | **565 / 565** |
+| Source links whose target file exists upstream | **522 / 522** |
 | Commit-pinned `blob/<sha>` links remaining | **0** |
 | `#L` line anchors remaining | **0** |
-| Internal `.md` / `.txt` cross-references that resolve | **282 / 282** |
-| Intra-doc heading anchors that resolve | **45 / 45** |
+| Internal `.md` cross-references that resolve | **306 / 306** |
+| Intra-doc heading anchors that resolve | **49 / 49** |
 
-Broken paths corrected during this refresh (upstream moved the files):
+Of the 524 source file links in the corpus, 522 point into the six repos cloned locally and
+are machine-checked above. The remaining two point at repos not cloned here (`gdrcopy`,
+`nccl-tests`) and are not automatically verified.
+
+Notable broken paths corrected during this refresh (upstream moved the files). These are the
+cases worth remembering, not the complete set:
 
 | Old path in docs | Current path | Repo |
 | --- | --- | --- |
@@ -66,42 +72,37 @@ Counts are source links into upstream repos (not internal cross-references).
 | Document | Links | Repos referenced |
 | --- | --- | --- |
 | [libfabric-overview.md](libfabric-overview.md) | 72 | libfabric 72 |
-| [ofi-plugin.md](ofi-plugin.md) | 63 | aws-ofi-nccl 32, libfabric 31 |
-| [efa-hardware-architecture.md](efa-hardware-architecture.md) | 44 | amzn-drivers 44 |
+| [ofi-plugin.md](ofi-plugin.md) | 64 | aws-ofi-nccl 33, libfabric 31 |
+| [efa-hardware-architecture.md](efa-hardware-architecture.md) | 41 | amzn-drivers 41 |
 | [nccl-datapath.md](nccl-datapath.md) | 40 | libfabric 15, nccl 10, rdma-core 8, aws-ofi-nccl 7 |
-| [nccl-channels.md](nccl-channels.md) | 31 | nccl 26, aws-ofi-nccl 5 |
+| [nccl-channels.md](nccl-channels.md) | 33 | nccl 28, aws-ofi-nccl 5 |
 | [freelist-allocator.md](freelist-allocator.md) | 25 | aws-ofi-nccl 24, libfabric 1 |
-| [mr-cache-implementation.md](mr-cache-implementation.md) | 24 | aws-ofi-nccl 23, libfabric 1 |
 | [nccl-tuner.md](nccl-tuner.md) | 24 | aws-ofi-nccl 16, nccl 8 |
-| [ofi-plugin-protocols.md](ofi-plugin-protocols.md) | 23 | aws-ofi-nccl 13, libfabric 10 |
 | [rdma-core-and-verbs.md](rdma-core-and-verbs.md) | 23 | rdma-core 20, libfabric 3 |
-| [nccl-usage.md](nccl-usage.md) | 22 | nccl 21, msccl 1 |
 | [threading-model.md](threading-model.md) | 20 | libfabric 11, aws-ofi-nccl 9 |
 | [srd-protocol.md](srd-protocol.md) | 19 | rdma-core 10, amzn-drivers 9 |
-| [kernel-efa-driver.md](kernel-efa-driver.md) | 17 | amzn-drivers 17 |
-| [cuda-memory.md](cuda-memory.md) | 13 | aws-ofi-nccl 13 |
+| [gpu-memory-kernel-path.md](gpu-memory-kernel-path.md) | 17 | amzn-drivers 13, libfabric 2, aws-ofi-nccl 1, open-gpu-kernel-modules 1 |
+| [stack-map.md](stack-map.md) | 16 | libfabric 5, open-gpu-kernel-modules 4, nccl 3, rdma-core 2, aws-ofi-nccl 1, amzn-drivers 1 |
+| [mr-cache-implementation.md](mr-cache-implementation.md) | 12 | aws-ofi-nccl 11, libfabric 1 |
 | [nccl-buffsize-explained.md](nccl-buffsize-explained.md) | 12 | nccl 12 |
 | [efa-provider.md](efa-provider.md) | 11 | libfabric 11 |
+| [kernel-efa-driver.md](kernel-efa-driver.md) | 11 | amzn-drivers 11 |
 | [algorithms/tree-algorithm.md](algorithms/tree-algorithm.md) | 10 | nccl 10 |
-| [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) | 10 | libfabric 5, linux 2, amzn-drivers 2, aws-ofi-nccl 1 |
 | [nccl-ep-vs-deepep-comparison.md](nccl-ep-vs-deepep-comparison.md) | 10 | aws-ofi-nccl 10 |
 | [optimizations.md](optimizations.md) | 10 | libfabric 6, aws-ofi-nccl 4 |
 | [algorithms/ring-algorithm.md](algorithms/ring-algorithm.md) | 8 | nccl 7, nccl-tests 1 |
 | [gin-alltoall-libfabric-trace.md](gin-alltoall-libfabric-trace.md) | 8 | aws-ofi-nccl 7, libfabric 1 |
+| [ofi-plugin-protocols.md](ofi-plugin-protocols.md) | 8 | aws-ofi-nccl 7, libfabric 1 |
 | [nccl-collectives.md](nccl-collectives.md) | 6 | nccl 6 |
 | [rdma-memreg.md](rdma-memreg.md) | 6 | amzn-drivers 6 |
-| [nccl-message-breakdown-complete.md](nccl-message-breakdown-complete.md) | 5 | nccl 5 |
-| [topology-and-binding.md](topology-and-binding.md) | 5 | aws-ofi-nccl 5 |
+| [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) | 4 | amzn-drivers 2, libfabric 2 |
 | [nccl-core.md](nccl-core.md) | 4 | nccl 4 |
-| [overview.md](overview.md) | 2 | libfabric 2 |
+| [topology-and-binding.md](topology-and-binding.md) | 4 | aws-ofi-nccl 4 |
 | [accelerator-memory.md](accelerator-memory.md) | 2 | libfabric 2 |
-| [kernel-efa-driver.md](kernel-efa-driver.md) | 1 | amzn-drivers 1 |
-| [accelerator-memory.md](accelerator-memory.md) | 1 | aws-ofi-nccl 1 |
+| [overview.md](overview.md) | 2 | libfabric 2 |
 
 Documents with no source links are derivation- or concept-oriented and cite code
-inline by path instead: `lkey-rkey-explained.md`, `nccl-message-breakdown-complete.md`,
-`optimization-opportunities.md`, `algorithms/nvls-tree-algorithm.md`,
-`algorithms/pat-algorithm.md`.
+inline by path instead: `algorithms/nvls-tree-algorithm.md`, `algorithms/pat-algorithm.md`, `cuda-memory.md`, `lkey-rkey-explained.md`, `nccl-message-breakdown-complete.md`, `nccl-usage.md`, `optimization-opportunities.md`.
 
 ## Cross-file consistency
 
@@ -136,11 +137,12 @@ linux-rdma/rdma-core  -> /home/bibracha/sw-stack/rdma-core
 
 ## Symbol Mappings
 
-Struct, class, and function name to source location mappings live in
-snapshot above). This is a **curated index of the symbols most often looked up, not a full
-symbol inventory** — kernel-driver types (`efa_dev`, `efa_qp`, `efa_cq`, `efa_mr`), the
+Struct, class, and function name to source location mappings are cited inline in the
+documents themselves, with paths and line numbers, rather than collected in a separate
+index file. What follows is a **curated set of notes on the symbols most often looked
+up, not a full symbol inventory** — kernel-driver types (`efa_dev`, `efa_qp`, `efa_cq`, `efa_mr`), the
 `efa_io_*` I/O descriptor structs, the `ibv_*` verbs structs and the EFA provider's
-`efa_rdm_ep` / `efa_rdm_pke` internals are cited inline, with paths and line numbers, in
+`efa_rdm_ep` / `efa_rdm_pke` internals are cited inline in
 [efa-hardware-architecture.md](efa-hardware-architecture.md),
 [kernel-efa-driver.md](kernel-efa-driver.md),
 [rdma-core-and-verbs.md](rdma-core-and-verbs.md) and

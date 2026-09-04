@@ -1055,7 +1055,7 @@ Understanding libfabric EFA provider specifics to optimize this data path furthe
 **NCCL Environment Variables**:
 - `NCCL_ALGO` - Force specific algorithm (Ring, Tree, etc.)
 - `NCCL_PROTO` - Force specific protocol (Simple, LL, LL128)
-- `NCCL_NCHANNELS` - Number of channels (default: auto-detected)
+- `NCCL_MIN_NCHANNELS` / `NCCL_MAX_NCHANNELS` - Clamp the channel count (default: unset, NCCL chooses)
 - `NCCL_BUFFSIZE` - Channel buffer size (default: 4 MB)
 - `NCCL_NET_GDR_LEVEL` - GPUDirect level (0-5)
 - `NCCL_IB_GID_INDEX` - GID index for RDMA

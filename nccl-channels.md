@@ -238,6 +238,20 @@ export NCCL_NCHANNELS_PER_NET_PEER=2
   tuner (cost model in `src/tuning/`) decides how many of the available channels each
   algorithm uses per message size. `NCCL_TREE_THRESHOLD` does still exist
   ([env.rst](https://github.com/NVIDIA/nccl/blob/master/docs/userguide/source/env.rst)).
+- **There is no bare `NCCL_NCHANNELS` environment variable either.** Only the two clamps
+  (`NCCL_MIN_NCHANNELS` / `NCCL_MAX_NCHANNELS`), their `NRINGS` aliases, and the unrelated
+  `NCCL_NCHANNELS_PER_NET_PEER` exist. There is no direct setter for the channel count: to
+  pin it you set the minimum and maximum to the same value. `NCCL_NCHANNELS=8` is silently
+  ignored, which makes it a costly mistake — the job runs, and the tuning you thought you
+  applied never took effect.
+- **`NCCL_CHUNK_SIZE` *does* exist**, despite looking like one of the fabricated knobs:
+  `NCCL_PARAM(ChunkSize, "CHUNK_SIZE", 0)` at
+  [nccl/src/enqueue/enqueue.cc, line 935](https://github.com/NVIDIA/nccl/blob/master/src/enqueue/enqueue.cc),
+  read via `ncclParamChunkSize()` at line 974. Default `0` means "derive from buffer/step
+  math". It is recorded here because it has already been challenged as fabricated once; it
+  is not. The separate per-transport knobs `NCCL_P2P_NET_CHUNKSIZE` (128 kB),
+  `NCCL_P2P_PCI_CHUNKSIZE` (128 kB) and `NCCL_P2P_NVL_CHUNKSIZE` (512 kB) are also real
+  ([init.cc, lines 868-870](https://github.com/NVIDIA/nccl/blob/master/src/init.cc)).
 - 2.31 adds `NCCL_NVLINK_UTIL_CENTRIC_SCHED_ENABLE` (NVLink-utilization-centric
   scheduling), parsed alongside the channel/CTA knobs in
   [init.cc, lines ~2170+](https://github.com/NVIDIA/nccl/blob/master/src/init.cc).

@@ -533,7 +533,7 @@ underlying chunk-size calculation stays the same.
 ## Formula Reference (all protocols)
 
 ```
-bytes_per_channel   = total_message_size / NCCL_NCHANNELS
+bytes_per_channel   = total_message_size / nChannels
 chunk_per_step      = bytes_per_channel / num_ranks        (Ring)
 num_steps           = 2 × (num_ranks - 1)                  (Ring)
                     = 2 × log₂(num_ranks)                  (Tree)
@@ -542,7 +542,7 @@ Simple:  sends_per_step = 1                     bytes_per_send = chunk_per_step
 LL128:   sends_per_step = chunk_per_step / 128  bytes_per_send = 128  (120B data + 8B flag)
 LL:      sends_per_step = chunk_per_step / 8    bytes_per_send = 8    (4B flag + 4B data)
 
-total_sends = NCCL_NCHANNELS × num_steps × sends_per_step
+total_sends = nChannels × num_steps × sends_per_step
 ```
 
 ---
@@ -587,7 +587,8 @@ total_sends = NCCL_NCHANNELS × num_steps × sends_per_step
 
 ```bash
 # Channels
-NCCL_NCHANNELS=8            # Number of channels
+NCCL_MIN_NCHANNELS=8        # Pin the channel count: set both clamps
+NCCL_MAX_NCHANNELS=8        # to the same value
 NCCL_MIN_NCHANNELS=4        # Minimum channels
 NCCL_MAX_NCHANNELS=16       # Maximum channels
 

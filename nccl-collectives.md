@@ -447,7 +447,7 @@ Channel 3:                [────]
 
 **Channel Count:**
 - Default: 4-16 channels
-- Configurable: `NCCL_NCHANNELS`
+- Configurable: `NCCL_MIN_NCHANNELS` / `NCCL_MAX_NCHANNELS` (clamps)
 - More channels = higher bandwidth (diminishing returns)
 
 ## Performance Implications

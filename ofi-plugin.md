@@ -384,26 +384,58 @@ Inside the transport-specific `regMr()`, the MR cache is consulted:
 
 **Registration Cache** ([include/nccl_ofi_mr.h](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi_mr.h)):
 ```cpp
-// Cache entry — one per registered memory region
-typedef struct nccl_ofi_reg_entry {
+// Cache entry — one per registered memory region.
+// Still a struct, but it now has a constructor that starts refcnt at 1.
+struct nccl_ofi_reg_entry {              // include/nccl_ofi_mr.h:186-195
     uintptr_t addr;         // Page-aligned base address
     size_t pages;           // Number of pages covered
     int refcnt;             // Reference count (shared registrations)
     void *handle;           // fi_mr handle from libfabric
-    nccl_net_ofi_ep_t *ep;  // Endpoint that owns this MR (for endpoint-specific MRs)
-} nccl_ofi_reg_entry_t;
+    nccl_net_ofi_ep_t *ep;  // Endpoint that owns this MR (endpoint-specific MRs only)
 
-// Cache structure — sorted array for containment lookup
-typedef struct nccl_ofi_mr_cache {
-    nccl_ofi_reg_entry_t **slots;  // Sorted array of entries (by address)
-    size_t system_page_size;       // Page size (typically 4096)
-    size_t size;                   // Allocated capacity (grows 2x)
-    size_t used;                   // Current number of entries
-    uint32_t hit_count;            // Statistics: cache hits
-    uint32_t miss_count;           // Statistics: cache misses
-    pthread_mutex_t lock;          // Thread-safe access
-} nccl_ofi_mr_cache_t;
+    nccl_ofi_reg_entry(uintptr_t addr_arg, size_t pages_arg,
+                       void *handle_arg, nccl_net_ofi_ep_t *ep_arg)
+        : addr(addr_arg), pages(pages_arg), refcnt(1),
+          handle(handle_arg), ep(ep_arg) {}
+};
+typedef struct nccl_ofi_reg_entry nccl_ofi_reg_entry_t;
 
+// The cache is a C++ CLASS, not a struct — and it holds NO lock of its own.
+class nccl_ofi_mr_cache {                // include/nccl_ofi_mr.h:201
+public:
+    nccl_ofi_mr_cache(size_t init_num_entries, size_t page_size_arg);
+    ~nccl_ofi_mr_cache();                // logs hit/miss stats
+    nccl_ofi_mr_cache(const nccl_ofi_mr_cache &) = delete;   // not copyable
+    nccl_ofi_mr_cache &operator=(const nccl_ofi_mr_cache &) = delete;
+
+    void *lookup_entry(nccl_ofi_mr_ckey_ref ckey, bool is_endpoint_mr);
+    int   insert_entry(nccl_ofi_mr_ckey_ref ckey, bool is_endpoint_mr, void *handle);
+    int   del_entry(void *handle);
+
+private:
+    std::vector<nccl_ofi_reg_entry_t *> slots;   // NOT a manually grown C array
+    size_t page_size;
+    uint32_t hit_count = 0;
+    uint32_t miss_count = 0;
+
+    void compute_page_address(uintptr_t addr, size_t size,
+                              uintptr_t &page_addr, size_t &pages) const;
+};
+```
+
+Two things to note, because older documentation and blog posts get both wrong:
+
+- **There is no `nccl_ofi_mr_cache_t` typedef and no embedded `pthread_mutex_t`.** The
+  former C API (`nccl_ofi_mr_cache_init()`, `_finalize()`, and a struct carrying its own
+  lock) has been removed. See [mr-cache-implementation.md](mr-cache-implementation.md) for
+  the removed-API mapping table.
+- **Serialization is external.** The cache is guarded by the *domain's* `mr_cache_lock`
+  (`std::mutex`, alongside `std::optional<nccl_ofi_mr_cache> mr_cache` in
+  [include/nccl_ofi.h, lines 473-476](https://github.com/aws/aws-ofi-nccl/blob/master/include/nccl_ofi.h)),
+  so every caller must hold that lock. A reader who assumes the cache locks itself will
+  write a race.
+
+```cpp
 // Cache key — supports iovec and DMA-BUF memory types
 struct nccl_ofi_mr_ckey {
     union {
@@ -679,7 +711,8 @@ Modern instances can use different EFA aggregations:
 # Automatic detection (default)
 # Or explicitly select
 NCCL_NET_GDR_LEVEL=LOC  # GPU-local NICs preferred
-NCCL_NCHANNELS=8       # Channels distributed across rails
+NCCL_MIN_NCHANNELS=8   # Channels distributed across rails; set both
+NCCL_MAX_NCHANNELS=8   # clamps to pin the count
 ```
 
 ### GPU Direct Support

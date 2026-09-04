@@ -586,15 +586,30 @@ From libfabric EFA provider defaults and kernel driver capabilities:
 **Memory Consumption** (estimated):
 - SQ: 64 bytes/entry × depth
 - RQ: 32 bytes/entry × depth
-- CQ: 16 bytes/entry × depth (TX), 24 bytes/entry (RX)
+- CQ: **16 bytes/entry**, both TX and RX (see the completion-descriptor sizes below)
 
 Example for 512-entry QP + 1024-entry CQ:
 - SQ: 512 × 64 = 32 KB
 - RQ: 512 × 32 = 16 KB
-- CQ: 1024 × 24 = 24 KB
-- **Total: ~72 KB per QP**
+- CQ: 1024 × 16 = 16 KB
+- **Total: ~64 KB per QP**
 
-For 1000 QPs: ~72 MB of queue memory
+For 1000 QPs: ~64 MB of queue memory
+
+**Completion-descriptor sizes**, summed from the struct definitions in
+[amzn-drivers kernel/linux/efa/src/efa_io_defs.h](https://github.com/amzn/amzn-drivers/blob/master/kernel/linux/efa/src/efa_io_defs.h):
+
+| Descriptor | Fields | Size |
+| --- | --- | --- |
+| `efa_io_cdesc_common` | `u16 req_id` + `u8 status` + `u8 flags` + `u16 qp_num` | **6 B** |
+| `efa_io_tx_cdesc` | common (6) + `efa_io_req_id_ex` (`u16 w[3]` = 6) + `u8 reserved[4]` | **16 B** |
+| `efa_io_rx_cdesc` | common (6) + `u16 length` + `u16 ah` + `u16 src_qp_num` + `u32 imm` | **16 B** |
+| `efa_io_rx_cdesc_ex` | `efa_io_rx_cdesc` (16) + union { `rdma_write` \| `u8 src_addr[16]` } | **32 B** |
+
+Note that `efa_io_tx_cdesc` is **16 bytes, not 8**. Older descriptions of this structure omit
+the `req_id_ex` field and the 4-byte reserved tail; both are present in the current header. The
+extended RX descriptor is used only when the source AH is unknown (`0xFFFF`) and the CQ has
+`set_src_addr` enabled, so 16 B is the size to budget with for ordinary traffic.
 
 ## Programming Model
 
@@ -758,7 +773,7 @@ and exposes the raw speed in Gbps via a new query-port verb. Earlier
 | **Queue Types** | Send Queue (SQ), Receive Queue (RQ), Completion Queue (CQ) |
 | **Transport** | SRD (Scalable Reliable Datagram) - reliable out-of-order delivery |
 | **WQE Size** | 64 bytes (TX), or **128 bytes** with wide-WQE cap (r3.3.0); 32 bytes (RX) |
-| **CQE Size** | 8 bytes (TX), 16 bytes (RX) |
+| **CQE Size** | 16 bytes (TX and RX); 32 bytes for the extended RX descriptor |
 | **Max Queue Depth** | 16384 (SQ/RQ), 262144 (CQ) |
 | **Typical Depth** | 512 (SQ/RQ), 1024 (CQ) |
 | **Operations** | Send, RDMA Read/Write (+ inline write on 128B WQE), Fast MR Reg/Inv |
