@@ -244,10 +244,21 @@ T_ring_simple = 2*7*15μs + 2*1GB/50GB/s * 7/8
               ≈ 35.2 ms
 ```
 
-Bandwidth achieved:
+Bandwidth achieved, using the definitions `nccl-tests` reports (see
+[Bus Bandwidth](#bus-bandwidth) below) rather than an ad-hoc denominator:
 ```
-BW = S / (T/2) = 1GB / 17.6ms ≈ 56.8 GB/s    (> 100% - pipelining effect)
+algbw = S / T_ring              = 1 GB / 35.2 ms   ≈ 28.4 GB/s
+busbw = algbw * 2*(N-1)/N       = 28.4 * 1.75      ≈ 49.7 GB/s   (99% of the 50 GB/s link)
 ```
+
+The busbw figure landing just under line rate is the point: for a 1 GB AllReduce the ring is
+bandwidth-bound and essentially saturates the link, which is what the model predicts.
+
+> Do not compute `S / (T/2)`. An earlier revision did, got 56.8 GB/s, noticed it was above
+> 100% of line rate, and labelled it a "pipelining effect". Goodput cannot exceed the link
+> rate; the number was an artefact of the invented denominator. `busbw` *can* exceed the link
+> rate on a full-duplex link because it counts bytes sent and received — but that is a
+> different claim, and it is not what `S / (T/2)` measures.
 
 ### LL128 Protocol (Medium Overhead)
 
