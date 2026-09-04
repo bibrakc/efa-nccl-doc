@@ -37,7 +37,7 @@ used `#L` anchors in roughly a sixth of them. All of that was normalized in the
 | Source links whose target file exists upstream | **525 / 525** |
 | Commit-pinned `blob/<sha>` links remaining | **0** |
 | `#L` line anchors remaining | **0** |
-| Internal `.md` cross-references that resolve | **316 / 316** |
+| Internal `.md` cross-references that resolve | **320 / 320** |
 | Intra-doc heading anchors that resolve | **49 / 49** |
 
 Reconciling the link counts, because two different subsets both happen to number 525:
@@ -45,7 +45,7 @@ Reconciling the link counts, because two different subsets both happen to number
 | Set | Count |
 | --- | --- |
 | All `blob/<ref>/<path>` links in the corpus | **527** |
-| — of those, in the 38 documents other than this one (the inventory table below sums to this) | 525 |
+| — of those, in the 39 documents other than this one (the inventory table below sums to this) | 525 |
 | — of those, inside this file (one is the `<repo>/<path>` placeholder in *Link Policy*) | 2 |
 | Checkable against a local clone, and verified above | **525** |
 | — not checkable: the `<repo>/<path>` placeholder in this file | 1 |

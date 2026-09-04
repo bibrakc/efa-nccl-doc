@@ -61,6 +61,7 @@ what is in each, what to ignore, and where the clones live.
 ### Orientation
 
 - **[stack-map.md](stack-map.md)** - Which repo owns which layer, where each clone lives, what
+- **[codegraph-setup.md](codegraph-setup.md)** - How to build the two code-graph indexes (combined for cross-repo lookup, plugin-only for accurate call graphs), what the graph cannot hold, and the trust caveats to settle before installing a third-party CLI
   matters inside each repo and what is noise, and the userspace/kernel boundary. **Read this
   first if you need to go find or change source.**
 
