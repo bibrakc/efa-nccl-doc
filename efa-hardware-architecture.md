@@ -602,8 +602,8 @@ For 1000 QPs: ~56 MB of queue memory
 | Descriptor | Fields | Size |
 | --- | --- | --- |
 | `efa_io_rx_desc` | `u32 buf_addr_lo` + `u32 buf_addr_hi` + `u16 req_id` + `u16 length` + `u32 lkey_ctrl` | **16 B** (RQ entry) |
-| `efa_io_tx_meta_desc` | `req_id`, `ctrl1..3`, `dest_qp_num`, `length`, `immediate_data`, `ah`, `qkey`, `reserved2[6]` | **28 B** |
-| `efa_io_tx_wqe` | meta (28) + union { `sgl[2]` / `inline_data[32]` / `rdma_req` / `fast_mr_reg_req` / `fast_mr_inv_req` }, `u64`-aligned | **64 B** (SQ entry) |
+| `efa_io_tx_meta_desc` | `req_id`, `ctrl1..3`, `dest_qp_num`, `length`, `immediate_data`, `ah`, `reserved`, `qkey`, `reserved2[6]`, `req_id_ex` (`u16 w[3]`) | **32 B** |
+| `efa_io_tx_wqe` | meta (32) + union { `sgl[2]` / `inline_data[32]` / `rdma_req` / `fast_mr_reg_req` / `fast_mr_inv_req` } (32) | **64 B** (SQ entry) |
 | `efa_io_cdesc_common` | `u16 req_id` + `u8 status` + `u8 flags` + `u16 qp_num` | **6 B** |
 | `efa_io_tx_cdesc` | common (6) + `efa_io_req_id_ex` (`u16 w[3]` = 6) + `u8 reserved[4]` | **16 B** (TX CQE) |
 | `efa_io_rx_cdesc` | common (6) + `u16 length` + `u16 ah` + `u16 src_qp_num` + `u32 imm` | **16 B** (RX CQE) |
@@ -614,9 +614,11 @@ Three of these are commonly misquoted:
 - **The RQ entry is 16 bytes, not 32.** rdma-core sets it straight from the struct:
   `rq_attr->entry_size = sizeof(struct efa_io_rx_desc)`
   ([rdma-core providers/efa/verbs.c, line 2438](https://github.com/linux-rdma/rdma-core/blob/master/providers/efa/verbs.c)).
-- **The SQ entry is 64 bytes** because the `u64` members of `fast_mr_reg_req` force 8-byte
-  alignment on the union, padding 28 + 32 up to 64. rdma-core names the constant after the
-  result: `#define EFA_IO_TX_DESC_SIZE_64 (sizeof(struct efa_io_tx_wqe))`
+- **The SQ entry is 64 bytes**, and it is exactly 32 + 32 with no padding: the meta descriptor
+  is 32 B (note the *trailing* `req_id_ex`, which is easy to miss when reading the struct — it
+  sits after `reserved2[6]`) and the data union is 32 B (`sgl[2]`, `inline_data[32]` and
+  `fast_mr_reg_req` are all 32). rdma-core names the constant after the result:
+  `#define EFA_IO_TX_DESC_SIZE_64 (sizeof(struct efa_io_tx_wqe))`
   ([verbs.c, line 30](https://github.com/linux-rdma/rdma-core/blob/master/providers/efa/verbs.c)),
   with `EFA_IO_TX_DESC_SIZE_128` for the wide-WQE variant.
 - `efa_io_tx_cdesc` is **16 bytes, not 8**. Older descriptions of this structure omit the
@@ -740,7 +742,8 @@ was fixed. Any statement that DMA-BUF requires Gen 4 or `0xefa3` and above is st
 - GPU memory exported as DMA-BUF file descriptor
 - Registered as MR via `fi_mr_regattr()` with `FI_HMEM` flag
 - Hardware performs DMA directly to/from GPU memory
-- Page merging: 4KB pages → 2MB pages (estimated 256x fewer IOMMU entries), and
+- Page merging: 4KB pages → 2MB pages (up to **512x** fewer IOMMU entries, the 2 MB / 4 KB
+  ratio, when the allocation is fully contiguous — see [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md)), and
   r3.3.0 adds support for MR page sizes larger than 4 GB
 
 **Supported GPUs**:

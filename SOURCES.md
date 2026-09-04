@@ -34,13 +34,13 @@ used `#L` anchors in roughly a sixth of them. All of that was normalized in the
 
 | Check | Result |
 | --- | --- |
-| Source links whose target file exists upstream | **524 / 524** |
+| Source links whose target file exists upstream | **525 / 525** |
 | Commit-pinned `blob/<sha>` links remaining | **0** |
 | `#L` line anchors remaining | **0** |
-| Internal `.md` cross-references that resolve | **314 / 314** |
+| Internal `.md` cross-references that resolve | **316 / 316** |
 | Intra-doc heading anchors that resolve | **49 / 49** |
 
-Of the 526 source file links in the corpus, 524 point into the six repos cloned locally and
+Of the 527 source file links in the corpus, 525 point into the six repos cloned locally and
 are machine-checked above. The remaining two point at repos not cloned here (`gdrcopy`,
 `nccl-tests`) and are not automatically verified.
 
@@ -95,7 +95,7 @@ Counts are source links into upstream repos (not internal cross-references).
 | [ofi-plugin-protocols.md](ofi-plugin-protocols.md) | 8 | aws-ofi-nccl 7, libfabric 1 |
 | [nccl-collectives.md](nccl-collectives.md) | 6 | nccl 6 |
 | [rdma-memreg.md](rdma-memreg.md) | 6 | amzn-drivers 6 |
-| [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) | 4 | amzn-drivers 2, libfabric 2 |
+| [dmabuf-gpu-memory.md](dmabuf-gpu-memory.md) | 5 | amzn-drivers 2, libfabric 2, aws-ofi-nccl 1 |
 | [nccl-core.md](nccl-core.md) | 4 | nccl 4 |
 | [topology-and-binding.md](topology-and-binding.md) | 4 | aws-ofi-nccl 4 |
 | [accelerator-memory.md](accelerator-memory.md) | 2 | libfabric 2 |

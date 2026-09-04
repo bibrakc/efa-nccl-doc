@@ -104,8 +104,9 @@ recording here:
 1. Application allocates GPU memory
    cudaMalloc(&gpu_ptr, size);  // GPU address (not CPU accessible!)
 
-2. CUDA exports as dmabuf
-   cudaExternalMemoryGetMappedBuffer(&dmabuf_fd, gpu_ptr, ...);
+2. CUDA exports the address range as a dmabuf FD (driver API, not runtime API)
+   cuMemGetHandleForAddressRange(&dmabuf_fd, aligned_ptr, aligned_size,
+                                 CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, flags);
    // dmabuf_fd is now a file descriptor
 
 3. NCCL calls plugin regmr with DMABUF type
@@ -241,8 +242,8 @@ Legacy Registration:
 
 DMA-BUF Registration (with page merging):
 - Kernel merges contiguous 4KB pages into 2MB huge pages
-- ~4,096 IOMMU entries
-- 256x fewer entries → lower overhead, better performance
+- 2,048 IOMMU entries          (4 GiB / 2 MiB = 2,048)
+- 512x fewer entries           (1,048,576 / 2,048 = 512) → lower overhead
 
 Derivation:  entries_merged = ceil(buffer_size / 2MB)
              entries_unmerged = ceil(buffer_size / 4KB)
@@ -314,17 +315,42 @@ dmesg | grep -i "ib_umem\|dmabuf\|page.*merg"
 
 ### CUDA Export (Application Side)
 
-**IDIOM — export a CUDA allocation as an opaque dmabuf FD:**
+**IDIOM — export a CUDA allocation as a dmabuf FD.** This is a **driver-API** call, and the
+plugin's own implementation is the reference
+([src/nccl_ofi_cuda.cpp, `nccl_net_ofi_gpu_get_dma_buf_fd()`, lines 487-513](https://github.com/aws/aws-ofi-nccl/blob/master/src/nccl_ofi_cuda.cpp)):
 
 ```c
-cudaMalloc(&gpu_ptr, size);
-cudaExternalMemoryHandleDesc desc = {};
-desc.type = cudaExternalMemoryHandleTypeOpaqueFd;
-desc.size = size;
-cudaExternalMemory_t ext_mem;
-cudaImportExternalMemory(&ext_mem, &desc);
-int dmabuf_fd = desc.handle.fd;   // the dmabuf FD
+/* ptr and size MUST be page-aligned; the plugin asserts this. */
+unsigned long long flags = 0;
+#if HAVE_CUDA_DMABUF_MAPPING_TYPE_PCIE
+flags = CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE;
+#endif
+
+CUresult ret = cuMemGetHandleForAddressRange(
+        &dmabuf_fd, (uintptr_t)aligned_ptr, aligned_size,
+        CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, flags);
+
+/* Older drivers reject the PCIe mapping-type flag; retry without it. */
+if ((ret == CUDA_ERROR_INVALID_VALUE || ret == CUDA_ERROR_NOT_SUPPORTED) && flags != 0)
+        ret = cuMemGetHandleForAddressRange(
+                &dmabuf_fd, (uintptr_t)aligned_ptr, aligned_size,
+                CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0);
 ```
+
+Three things this idiom encodes, none of them guessable:
+
+- `cuMemGetHandleForAddressRange` requires **CUDA 11.7+** (the plugin declares it with a
+  `11070` version guard) and is resolved dynamically, not linked.
+- **The pointer and size must be page-aligned**, and the plugin asserts both before calling.
+- The **retry without flags** is load-bearing: drivers that predate the PCIe mapping type
+  return `CUDA_ERROR_INVALID_VALUE` or `CUDA_ERROR_NOT_SUPPORTED`, and the second attempt is
+  what makes DMA-BUF work on them.
+
+> **Do not use `cudaImportExternalMemory()` or `cudaExternalMemoryGetMappedBuffer()` for this.**
+> Both run the *other* direction — they consume an fd you already hold and hand back a device
+> pointer. In `cudaExternalMemoryHandleDesc`, `handle.fd` is an **input** field. An earlier
+> revision of this document showed them as the export idiom; that was wrong. See
+> [cuda-memory.md](cuda-memory.md) for the import direction.
 
 ### OFI Plugin / Kernel Registration
 
