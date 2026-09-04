@@ -254,7 +254,8 @@ busbw = algbw * 2*(N-1)/N       = 28.4 * 1.75      ≈ 49.7 GB/s   (99% of the 5
 The busbw figure landing just under line rate is the point: for a 1 GB AllReduce the ring is
 bandwidth-bound and essentially saturates the link, which is what the model predicts.
 
-> Do not compute `S / (T/2)`. An earlier revision did, got 56.8 GB/s, noticed it was above
+> Do not compute `S / (T/2)` — including the disguised form where the halving is folded into
+> a literal (`1 GB / 26.9 ms` when T is 53.8 ms). An earlier revision did, got 56.8 GB/s, noticed it was above
 > 100% of line rate, and labelled it a "pipelining effect". Goodput cannot exceed the link
 > rate; the number was an artefact of the invented denominator. `busbw` *can* exceed the link
 > rate on a full-duplex link because it counts bytes sent and received — but that is a
@@ -278,10 +279,14 @@ T_ring_LL128 = 2*7*8μs + 2*1GB/(50GB/s*0.65) * 7/8
              ≈ 53.8 ms
 ```
 
-Bandwidth achieved:
+Bandwidth achieved (same definitions as the Simple case above):
 ```
-BW = 1GB / 26.9ms ≈ 37.2 GB/s    (~74% of link bandwidth)
+algbw = 1 GB / 53.8 ms   ≈ 18.6 GB/s
+busbw = 18.6 * 2*(N-1)/N ≈ 32.5 GB/s   (65% of the 50 GB/s link)
 ```
+
+The 65% falls out exactly on the 0.65 efficiency factor used for `β_LL128`, which is the
+consistency check worth doing on figures like these.
 
 ### LL Protocol (Low Latency, Low Bandwidth)
 
@@ -303,8 +308,11 @@ T_ring_LL = 2*7*6μs + 2*1GB/(50GB/s*0.25) * 7/8
 
 Bandwidth achieved:
 ```
-BW = 1GB / 70ms ≈ 14.3 GB/s    (~29% of link bandwidth)
+algbw = 1 GB / 140 ms    ≈ 7.1 GB/s
+busbw = 7.1 * 2*(N-1)/N  ≈ 12.5 GB/s   (25% of the 50 GB/s link)
 ```
+
+Again the result lands on the protocol's own efficiency factor, 0.25.
 
 **Conclusion**: LL is only used for small messages where latency dominates.
 

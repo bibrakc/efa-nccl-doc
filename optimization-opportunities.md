@@ -481,16 +481,21 @@ NCCL_PROTO=LL128,Simple           # or ^LL128 to exclude it
 
 ### Current State
 
-From [efa-provider.md](efa-provider.md):
+From [efa-provider.md](efa-provider.md), which is the authority on instance EFA counts:
 
 ```
-p4d.24xlarge: 4x 100 Gbps EFA (400 Gbps total)
-p5.48xlarge:  8x 200 Gbps EFA (1600 Gbps total)
+p4d.24xlarge:  4 x 100 Gbps EFA  (400 Gbps total,  8x A100) - send/recv only
+p4de.24xlarge: 4 x 100 Gbps EFA  (400 Gbps total,  8x A100) - send/recv only
+p5.48xlarge:  32 x 100 Gbps EFA (3200 Gbps total,  8x H100) - EFAv2
+p5e.48xlarge: 32 x 100 Gbps EFA (3200 Gbps total,  8x H100) - EFAv2
+p5en.48xlarge:32 x 100 Gbps EFA (3200 Gbps total,  8x H200) - EFAv3
 
-Current scaling:
-  4 EFAs × 12 GB/s = ~48 GB/s aggregate
-  Limited by PCIe, not network
+Per-GPU share on p5: 32 EFAs / 8 GPUs = 4 EFAs per GPU = ~400 Gbps = ~50 GB/s
 ```
+
+Note that p5 has **32 adapters at 100 Gbps**, not 8 at 200. An earlier revision of this
+document stated the latter while attributing it to `efa-provider.md`, which says otherwise;
+the rail arithmetic below depends on the real count.
 
 ### Optimization Opportunities
 

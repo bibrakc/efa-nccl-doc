@@ -40,9 +40,20 @@ used `#L` anchors in roughly a sixth of them. All of that was normalized in the
 | Internal `.md` cross-references that resolve | **316 / 316** |
 | Intra-doc heading anchors that resolve | **49 / 49** |
 
-Of the 527 source file links in the corpus, 525 point into the six repos cloned locally and
-are machine-checked above. The remaining two point at repos not cloned here (`gdrcopy`,
-`nccl-tests`) and are not automatically verified.
+Reconciling the link counts, because two different subsets both happen to number 525:
+
+| Set | Count |
+| --- | --- |
+| All `blob/<ref>/<path>` links in the corpus | **527** |
+| — of those, in the 38 documents other than this one (the inventory table below sums to this) | 525 |
+| — of those, inside this file (one is the `<repo>/<path>` placeholder in *Link Policy*) | 2 |
+| Checkable against a local clone, and verified above | **525** |
+| — not checkable: the `<repo>/<path>` placeholder in this file | 1 |
+| — not checkable: one link into `nccl-tests`, which is not cloned here | 1 |
+
+The inventory total and the checkable total are both 525 but are *not* the same 525: the
+inventory includes the `nccl-tests` link and excludes this file's two, while the checkable set
+excludes the `nccl-tests` link and the placeholder.
 
 Notable broken paths corrected during this refresh (upstream moved the files). These are the
 cases worth remembering, not the complete set:
@@ -100,6 +111,7 @@ Counts are source links into upstream repos (not internal cross-references).
 | [topology-and-binding.md](topology-and-binding.md) | 4 | aws-ofi-nccl 4 |
 | [accelerator-memory.md](accelerator-memory.md) | 2 | libfabric 2 |
 | [overview.md](overview.md) | 2 | libfabric 2 |
+| **Total** | **525** | |
 
 Documents with no source links are derivation- or concept-oriented and cite code
 inline by path instead: `algorithms/nvls-tree-algorithm.md`, `algorithms/pat-algorithm.md`, `cuda-memory.md`, `lkey-rkey-explained.md`, `nccl-message-breakdown-complete.md`, `nccl-usage.md`, `optimization-opportunities.md`.
